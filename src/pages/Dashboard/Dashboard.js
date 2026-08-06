@@ -467,6 +467,10 @@ const DashboardPage = (() => {
               <button class="dash-btn-action btn-dash-view" data-no="${_esc(b.billNo)}" title="View Invoice">
                 ${IC.eye} View
               </button>
+              ${!isTrash ? `
+              <button class="dash-btn-action btn-dash-edit" data-no="${_esc(b.billNo)}" title="Edit Bill">
+                ${IC.edit} Edit
+              </button>` : ''}
               <button class="dash-btn-action btn-dash-print" data-no="${_esc(b.billNo)}" title="Print Invoice">
                 ${IC.print} Print
               </button>
@@ -570,7 +574,18 @@ const DashboardPage = (() => {
       });
     });
 
-    /* View & Print handlers */
+    /* View & Print & Edit handlers */
+    page.querySelectorAll('.btn-dash-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const no = btn.dataset.no;
+        if (no) {
+          localStorage.setItem('editingInvoiceId', no);
+        }
+        window.location.hash = 'billing';
+      });
+    });
+
     page.querySelectorAll('.btn-dash-view').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();

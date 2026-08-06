@@ -514,6 +514,106 @@ const DB = (() => {
   }
 
   /* ══════════════════════════════════════════════════════════════
+     UPDATE EXISTING BILL
+     ══════════════════════════════════════════════════════════════ */
+  function updateBill({ billId, customerName, customerPhone, billType, paymentMode, billNo, items, totals }) {
+    let bills = T.get('bills');
+    if (!bills || bills.length === 0) {
+      try {
+        bills = JSON.parse(localStorage.getItem('svmh_bills') || localStorage.getItem('bills') || '[]');
+      } catch { bills = []; }
+    }
+
+    const index = bills.findIndex(b => b.id === billId || b.billNo === billNo || b.invoiceNo === billNo || b.invoiceNo === billId || b.id === billNo || b.billNo === billId);
+    if (index === -1) return { success: false, error: 'Bill not found' };
+
+    const targetBill = bills[index];
+    const targetInvoiceNo = targetBill.invoiceNo || targetBill.billNo || billNo || billId;
+
+    const nameTrimmed   = (customerName  || '').trim();
+    const effectiveName = nameTrimmed || 'Walk-in Customer';
+    const customer      = Customers.upsert(effectiveName, (customerPhone || '').trim());
+
+    // Restore old stock for previous items of this bill before applying new items
+    const oldItems = BillItems.forBill(targetBill.id);
+    oldItems.forEach(oldIt => {
+      if (oldIt.productId) {
+        Products.adjustStock(oldIt.productId, -oldIt.qty, targetInvoiceNo);
+      }
+    });
+
+    // Remove old bill_items
+    const allBillItems = T.get('bill_items').filter(it => it.billId !== targetBill.id);
+
+    // Insert new bill_items
+    const newItems = items.map(item => _stamp({
+      id: _id('BI'),
+      billId: targetBill.id,
+      productId:      item.productId   || null,
+      productName:    item.productName || '',
+      hsn:            item.hsn         || '',
+      unit:           item.unit        || '',
+      qty:            item.qty,
+      rate:           item.rate,
+      discPct:        item.discPct     || 0,
+      gstPct:         item.gstPct      || 0,
+      baseAmount:     item.baseAmount      || 0,
+      discountAmount: item.discountAmount  || 0,
+      taxableAmount:  item.taxableAmount   || 0,
+      gstAmount:      item.gstAmount       || 0,
+      rowTotal:       item.rowTotal        || 0,
+    }));
+
+    T.set('bill_items', [...allBillItems, ...newItems]);
+
+    // Reduce stock for new items
+    items.forEach(item => {
+      if (item.productId) {
+        Products.adjustStock(item.productId, item.qty, targetInvoiceNo);
+      }
+    });
+
+    // Update bill record keeping the same invoiceNo & billNo & ID
+    const updatedBill = {
+      ...targetBill,
+      invoiceNo:         targetInvoiceNo,
+      billNo:            targetInvoiceNo,
+      customerId:        customer.id,
+      customerName:      customer.name,
+      customerPhone:     customer.phone,
+      billType,
+      paymentMode:       paymentMode || 'Cash',
+      paymentMethod:     paymentMode || 'Cash',
+      items:             newItems,
+      itemCount:         items.length,
+      subtotal:          totals.subtotal          || 0,
+      totalItemDiscount: totals.totalItemDiscount || 0,
+      totalTaxable:      totals.totalTaxable      || 0,
+      totalGst:          totals.totalGst          || 0,
+      billDiscount:      totals.billDiscount      || 0,
+      roundOff:          totals.roundOff          || 0,
+      grandTotal:        totals.grandTotal        || 0,
+      updatedAt:          _now(),
+    };
+
+    bills[index] = updatedBill;
+    T.set('bills', bills);
+
+    // Write to both localStorage keys
+    localStorage.setItem('bills', JSON.stringify(bills));
+    localStorage.setItem('svmh_bills', JSON.stringify(bills));
+
+    // Sync to DiskStorage
+    if (typeof DiskStorage !== 'undefined') {
+      DiskStorage.writeBillFile(updatedBill, newItems);
+      DiskStorage.writeProductsFile(Products.all());
+      DiskStorage.writeCustomersFile(Customers.all());
+    }
+
+    return { success: true, bill: updatedBill, items: newItems, customer };
+  }
+
+  /* ══════════════════════════════════════════════════════════════
      UPDATE BILL PAYMENT MODE
      ══════════════════════════════════════════════════════════════ */
   function updateBillPaymentMode(billIdOrNo, newMode) {
@@ -797,6 +897,7 @@ const DB = (() => {
     Settings,
     nextBillNo,
     saveBill,
+    updateBill,
     deleteBill,
     permanentlyDeleteBill,
     restoreBill,

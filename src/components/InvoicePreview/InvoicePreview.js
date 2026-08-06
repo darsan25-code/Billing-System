@@ -84,6 +84,9 @@ const InvoicePreview = (() => {
             <span class="inv-no-pill">${_esc(bill.billNo)}</span>
           </div>
           <div class="invoice-toolbar-actions">
+            <button class="inv-btn" id="inv-btn-edit-bill" style="background:#f59e0b;color:#0f172a;border:none;font-weight:700">
+              ✏️ Edit Bill
+            </button>
             <button class="inv-btn inv-btn-print" id="inv-btn-print" onclick="printInvoice()">
               🖨️ Print Invoice
             </button>
@@ -252,6 +255,14 @@ const InvoicePreview = (() => {
     const closeFn = () => overlay.remove();
 
     document.getElementById('inv-btn-close')?.addEventListener('click', closeFn);
+    document.getElementById('inv-btn-edit-bill')?.addEventListener('click', () => {
+      closeFn();
+      const no = bill ? (bill.billNo || bill.invoiceNo || bill.id) : null;
+      if (no) {
+        localStorage.setItem('editingInvoiceId', no);
+      }
+      window.location.hash = 'billing';
+    });
     document.getElementById('inv-btn-print')?.addEventListener('click', () => printInvoice());
     document.getElementById('inv-btn-pdf')?.addEventListener('click', () => printInvoice());
 
