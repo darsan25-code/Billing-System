@@ -120,8 +120,11 @@ const BillingPage = (() => {
 
     const qty     = parseFloat(tr.querySelector('.qty-input')?.value)  || 0;
     const discPct = parseFloat(tr.querySelector('.disc-input')?.value) || 0;
-    const rate    = parseFloat(tr.dataset.rate)   || 0;
+    const rateVal = tr.querySelector('.rate-input')?.value;
+    const rate    = (rateVal !== undefined && rateVal !== '' && !isNaN(parseFloat(rateVal))) ? parseFloat(rateVal) : (parseFloat(tr.dataset.rate) || 0);
     const gstPct  = parseFloat(tr.dataset.gstPct) || 0;
+
+    tr.dataset.rate = rate;
 
     const res = BC.calcRow(qty, rate, discPct, gstPct, _isGstBill);
 
@@ -148,13 +151,17 @@ const BillingPage = (() => {
     if (!BC) return;
 
     const rows = Array.from(document.querySelectorAll('#bill-table-body .bill-row'));
-    const rowResults = rows.map(tr => BC.calcRow(
-      parseFloat(tr.querySelector('.qty-input')?.value)  || 0,
-      parseFloat(tr.dataset.rate)   || 0,
-      parseFloat(tr.querySelector('.disc-input')?.value) || 0,
-      parseFloat(tr.dataset.gstPct) || 0,
-      _isGstBill
-    ));
+    const rowResults = rows.map(tr => {
+      const rateVal = tr.querySelector('.rate-input')?.value;
+      const rate    = (rateVal !== undefined && rateVal !== '' && !isNaN(parseFloat(rateVal))) ? parseFloat(rateVal) : (parseFloat(tr.dataset.rate) || 0);
+      return BC.calcRow(
+        parseFloat(tr.querySelector('.qty-input')?.value)  || 0,
+        rate,
+        parseFloat(tr.querySelector('.disc-input')?.value) || 0,
+        parseFloat(tr.dataset.gstPct) || 0,
+        _isGstBill
+      );
+    });
 
     const billDiscAmt = parseFloat(_$('bill-discount-input')?.value) || 0;
     const T = BC.calcBillTotals(rowResults, billDiscAmt, _isGstBill);
@@ -245,17 +252,23 @@ const BillingPage = (() => {
     _recalcBillTotals();
   }
 
-  function _wireTabNav(qtyInput) {
-    qtyInput.addEventListener('keydown', (e) => {
+  function _wireTabNav(inputEl) {
+    if (!inputEl) return;
+    inputEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
+      const all = Array.from(document.querySelectorAll('#bill-table-body .qty-input, #bill-table-body .rate-input, #bill-table-body .disc-input'));
+      if (all.length === 0) return;
+      const idx = all.indexOf(e.target);
+      if (idx === -1) return;
+      
       e.preventDefault();
-      const all = Array.from(document.querySelectorAll('#bill-table-body .qty-input'));
-      if (all.length < 2) return;
-      const idx  = all.indexOf(e.target);
-      const next = e.shiftKey ? (idx - 1 + all.length) % all.length : (idx + 1) % all.length;
-      all[next].focus();
-      all[next].select();
-      _selectRow(all[next].closest('.bill-row'));
+      const nextIdx = e.shiftKey ? (idx - 1 + all.length) % all.length : (idx + 1) % all.length;
+      const nextInput = all[nextIdx];
+      if (nextInput) {
+        nextInput.focus();
+        if (typeof nextInput.select === 'function') nextInput.select();
+        _selectRow(nextInput.closest('.bill-row'));
+      }
     });
   }
 
@@ -272,11 +285,13 @@ const BillingPage = (() => {
     _rowCounter++;
     _itemCount++;
 
+    const initialRate = (product.rate !== undefined && product.rate !== '' && !isNaN(parseFloat(product.rate))) ? parseFloat(product.rate) : 0;
+
     const tr = document.createElement('tr');
     tr.className          = 'bill-row bill-row-animate';
     tr.dataset.rowId      = _rowCounter;
-    tr.dataset.rate       = product.rate;
-    tr.dataset.gstPct     = product.gst;
+    tr.dataset.rate       = initialRate;
+    tr.dataset.gstPct     = product.gst || 0;
     tr.dataset.productId  = product.id   || '';
     tr.dataset.productName= product.name || '';
     tr.dataset.hsn        = product.hsn  || '';
@@ -301,7 +316,7 @@ const BillingPage = (() => {
       <td class="col-unit">${_esc(product.unit || '—')}</td>
       <td class="col-rate rate-cell">
         <input type="number" class="rate-input" id="rate-${_rowCounter}"
-          value="${product.rate}" min="0.01" step="any"
+          value="${initialRate}" min="0" step="any"
           aria-label="Rate for ${_esc(product.name)}"
           style="width:76px;padding:4px 6px;border:1.5px solid #cbd5e1;border-radius:4px;font-weight:700;color:#0f172a;text-align:right" />
       </td>
@@ -310,7 +325,7 @@ const BillingPage = (() => {
           value="0" min="0" max="100" step="0.5" placeholder="0"
           aria-label="Disc% for ${_esc(product.name)}" />
       </td>
-      <td class="col-gst gst-only-col gst-pct-cell">${product.gst}%</td>
+      <td class="col-gst gst-only-col gst-pct-cell">${product.gst || 0}%</td>
       <td class="col-gst gst-only-col gst-amt-cell cell-pending">—</td>
       <td class="col-total total-cell cell-pending">—</td>
       <td class="col-action">
@@ -337,6 +352,8 @@ const BillingPage = (() => {
     });
 
     _wireTabNav(qtyInput);
+    _wireTabNav(rateInput);
+    _wireTabNav(discInput);
 
     tr.querySelectorAll('td:not(.col-action):not(.col-qty):not(.col-disc):not(.col-rate)').forEach(td => {
       td.addEventListener('click', () => _selectRow(tr));
@@ -746,10 +763,10 @@ const BillingPage = (() => {
                   </select>
                 </div>
 
-                <!-- Selling Price (required) -->
+                <!-- Selling Price (Optional) -->
                 <div class="qa-field">
-                  <label for="qa-price">Selling Price (₹) <span class="qa-req">*</span></label>
-                  <input type="number" id="qa-price" class="qa-input" placeholder="0.00" min="0" step="any" required />
+                  <label for="qa-price">Selling Price (₹) <span class="qa-opt">(Optional)</span></label>
+                  <input type="number" id="qa-price" class="qa-input" placeholder="0.00" min="0" step="any" />
                 </div>
 
                 <!-- GST % (default 0%) -->
@@ -806,7 +823,13 @@ const BillingPage = (() => {
       _$('qa-btn-save-and-add')?.addEventListener('click', () => _handleQuickAddSubmit(true));
 
       overlay.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          _closeQuickAddModal();
+          return;
+        }
+        if (e.key === 'Enter') {
+          if (e.target.id === 'qa-btn-cancel' || e.target.id === 'qa-btn-save-and-add') return;
           e.preventDefault();
           _handleQuickAddSubmit(false);
         }
@@ -850,7 +873,11 @@ const BillingPage = (() => {
     const priceInput = _$('qa-price');
 
     const name  = (nameInput?.value  || '').trim();
-    const rate  = parseFloat(priceInput?.value);
+    const priceVal = priceInput?.value;
+    let rate = parseFloat(priceVal);
+    if (isNaN(rate) || rate < 0 || priceVal === '' || priceVal === null) {
+      rate = 0;
+    }
     const unit  = _$('qa-unit')?.value || 'Nos';
     const gst   = parseFloat(_$('qa-gst')?.value) || 0;
     const qty   = parseFloat(_$('qa-qty')?.value) || 1;
@@ -860,12 +887,6 @@ const BillingPage = (() => {
     if (!name) {
       _showToast('⚠️ Please enter product name', 'warning');
       if (nameInput) nameInput.focus();
-      return;
-    }
-
-    if (isNaN(rate) || rate < 0 || priceInput?.value === '') {
-      _showToast('⚠️ Please enter a valid selling price', 'warning');
-      if (priceInput) priceInput.focus();
       return;
     }
 
@@ -910,9 +931,20 @@ const BillingPage = (() => {
 
     _onProductSelected(productObj, qty);
 
-    _showToast('Item added successfully', 'success', 2200);
+    _showToast(`Item "${name}" added to bill successfully`, 'success', 2200);
 
-    _closeQuickAddModal();
+    // Clear Quick Add form, keep modal open, focus product name input automatically
+    if (nameInput) nameInput.value = '';
+    if (priceInput) priceInput.value = '';
+    const hsnInput = _$('qa-hsn'); if (hsnInput) hsnInput.value = '';
+    const brandInput = _$('qa-brand'); if (brandInput) brandInput.value = '';
+    const unitSelect = _$('qa-unit'); if (unitSelect) unitSelect.value = 'Nos';
+    const gstSelect = _$('qa-gst'); if (gstSelect) gstSelect.value = '0';
+    const qtyInput = _$('qa-qty'); if (qtyInput) qtyInput.value = '1';
+
+    if (nameInput) {
+      nameInput.focus();
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════

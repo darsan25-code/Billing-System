@@ -621,7 +621,9 @@
 }
 
 .col-qty input,
-.col-disc input {
+.col-disc input,
+.col-rate input,
+.rate-input {
   width: 65px;
   padding: 5px 8px;
   border: 1.5px solid var(--bill-border);
@@ -636,7 +638,9 @@
 }
 
 .col-qty input:focus,
-.col-disc input:focus {
+.col-disc input:focus,
+.col-rate input:focus,
+.rate-input:focus {
   border-color: var(--bill-accent);
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2);
   outline: none;
