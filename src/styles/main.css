@@ -412,7 +412,9 @@
   /* Show document only */
   #invoice-modal-overlay,
   #printable-invoice,
-  #printable-invoice * {
+  #invoice-preview,
+  #printable-invoice *,
+  #invoice-preview * {
     visibility: visible;
   }
 

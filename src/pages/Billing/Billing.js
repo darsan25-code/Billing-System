@@ -1031,7 +1031,13 @@ const BillingPage = (() => {
       _$(id)?.addEventListener('click', (e) => { e.preventDefault(); _saveBill(); });
     });
     ['btn-print-top','btn-print-main'].forEach(id => {
-      _$(id)?.addEventListener('click', (e) => { e.preventDefault(); _openInvoicePreview(); });
+      _$(id)?.addEventListener('click', (e) => {
+        e.preventDefault();
+        _openInvoicePreview();
+        setTimeout(() => {
+          if (typeof printInvoice === 'function') printInvoice();
+        }, 150);
+      });
     });
     ['btn-view-invoice-top','btn-view-invoice-main'].forEach(id => {
       _$(id)?.addEventListener('click', (e) => { e.preventDefault(); _openInvoicePreview(); });

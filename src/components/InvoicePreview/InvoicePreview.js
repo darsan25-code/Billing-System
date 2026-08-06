@@ -58,7 +58,7 @@ const InvoicePreview = (() => {
       return;
     }
 
-    const items = (typeof DB !== 'undefined') ? DB.BillItems.forBill(bill.id) : (bill.items || []);
+    const items = (bill.items && bill.items.length > 0) ? bill.items : (bill.cartItems || bill.products || (typeof DB !== 'undefined' ? DB.BillItems.forBill(bill.id) : []));
     _renderModal(bill, items);
   }
 
@@ -84,7 +84,7 @@ const InvoicePreview = (() => {
             <span class="inv-no-pill">${_esc(bill.billNo)}</span>
           </div>
           <div class="invoice-toolbar-actions">
-            <button class="inv-btn inv-btn-print" id="inv-btn-print">
+            <button class="inv-btn inv-btn-print" id="inv-btn-print" onclick="printInvoice()">
               🖨️ Print Invoice
             </button>
             <button class="inv-btn inv-btn-pdf" id="inv-btn-pdf">
@@ -97,7 +97,7 @@ const InvoicePreview = (() => {
         </div>
 
         <!-- Printable Document Area -->
-        <div class="invoice-document" id="printable-invoice">
+        <div class="invoice-document" id="invoice-preview">
 
           <!-- Shop Header -->
           <div class="inv-header">
@@ -151,23 +151,34 @@ const InvoicePreview = (() => {
               </tr>
             </thead>
             <tbody>
-              ${items.map((it, idx) => `
+              ${items.map((it, idx) => {
+                const name = it.name || it.productName || '—';
+                const hsn = it.hsn || '—';
+                const qty = it.quantity ?? it.qty ?? 0;
+                const unit = it.unit || '—';
+                const rate = it.rate || 0;
+                const disc = it.discount ?? it.discPct ?? 0;
+                const total = it.total ?? it.rowTotal ?? (qty * rate);
+                const taxable = (it.taxableAmount !== undefined) ? it.taxableAmount : (qty * rate);
+                const gstPct = it.gstPct ?? it.gst ?? 0;
+                const gstAmt = it.gstAmount ?? 0;
+                return `
                 <tr>
                   <td class="txt-center">${idx + 1}</td>
                   <td>
-                    <div class="inv-item-name">${_esc(it.productName || '—')}</div>
+                    <div class="inv-item-name">${_esc(name)}</div>
                   </td>
-                  <td class="txt-mono">${_esc(it.hsn || '—')}</td>
-                  <td class="txt-center font-bold">${it.qty}</td>
-                  <td>${_esc(it.unit || '—')}</td>
-                  <td class="txt-right">${(it.rate || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
-                  <td class="txt-right">${it.discPct ? it.discPct + '%' : '—'}</td>
-                  ${isGst ? `<td class="txt-right">${(it.taxableAmount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>` : ''}
-                  ${isGst ? `<td class="txt-center">${it.gstPct}%</td>` : ''}
-                  ${isGst ? `<td class="txt-right">${(it.gstAmount || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>` : ''}
-                  <td class="txt-right font-bold">${(it.rowTotal || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                  <td class="txt-mono">${_esc(hsn)}</td>
+                  <td class="txt-center font-bold">${qty}</td>
+                  <td>${_esc(unit)}</td>
+                  <td class="txt-right">${(typeof rate === 'number') ? rate.toLocaleString('en-IN', {minimumFractionDigits: 2}) : rate}</td>
+                  <td class="txt-right">${disc ? disc + '%' : '—'}</td>
+                  ${isGst ? `<td class="txt-right">${(typeof taxable === 'number') ? taxable.toLocaleString('en-IN', {minimumFractionDigits: 2}) : taxable}</td>` : ''}
+                  ${isGst ? `<td class="txt-center">${gstPct}%</td>` : ''}
+                  ${isGst ? `<td class="txt-right">${(typeof gstAmt === 'number') ? gstAmt.toLocaleString('en-IN', {minimumFractionDigits: 2}) : gstAmt}</td>` : ''}
+                  <td class="txt-right font-bold">${(typeof total === 'number') ? total.toLocaleString('en-IN', {minimumFractionDigits: 2}) : total}</td>
                 </tr>
-              `).join('')}
+              `;}).join('')}
             </tbody>
           </table>
 
@@ -239,11 +250,10 @@ const InvoicePreview = (() => {
 
     /* Event Handlers */
     const closeFn = () => overlay.remove();
-    const printFn = () => window.print();
 
     document.getElementById('inv-btn-close')?.addEventListener('click', closeFn);
-    document.getElementById('inv-btn-print')?.addEventListener('click', printFn);
-    document.getElementById('inv-btn-pdf')?.addEventListener('click', printFn);
+    document.getElementById('inv-btn-print')?.addEventListener('click', () => printInvoice());
+    document.getElementById('inv-btn-pdf')?.addEventListener('click', () => printInvoice());
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeFn();

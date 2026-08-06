@@ -471,13 +471,13 @@ const DashboardPage = (() => {
                 ${IC.print} Print
               </button>
               ${!isTrash ? `
-              <button class="dash-btn-action btn-dash-delete" data-id="${_esc(b.id)}" data-no="${_esc(b.billNo)}" data-cust="${_esc(custName)}" data-amount="${_esc(amount)}" title="Delete Invoice">
+              <button class="dash-btn-action btn-dash-delete delete-btn" data-id="${_esc(b.id)}" data-no="${_esc(b.billNo)}" data-cust="${_esc(custName)}" data-amount="${_esc(amount)}" title="Delete Invoice">
                 ${IC.trash} Delete
               </button>` : `
               <button class="dash-btn-action btn-dash-restore" data-id="${_esc(b.id)}" data-no="${_esc(b.billNo)}" title="Restore Invoice" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0">
                 ${IC.restore} Restore
               </button>
-              <button class="dash-btn-action btn-dash-perm-delete" data-id="${_esc(b.id)}" data-no="${_esc(b.billNo)}" title="Delete Permanently" style="background:#fee2e2;color:#dc2626">
+              <button class="dash-btn-action btn-dash-perm-delete delete-btn" data-id="${_esc(b.id)}" data-no="${_esc(b.billNo)}" title="Delete Permanently" style="background:#fee2e2;color:#dc2626">
                 ✕ Permanently
               </button>`}
             </div>
@@ -590,39 +590,40 @@ const DashboardPage = (() => {
       });
     });
 
-    /* Soft Delete Action */
-    page.querySelectorAll('.btn-dash-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        console.log("Delete clicked");
-        const id       = btn.dataset.id;
-        const no       = btn.dataset.no;
-        const cust     = btn.dataset.cust;
-        const amount   = btn.dataset.amount;
-        const row      = btn.closest('.dash-bill-row');
+    /* Event Delegation for Delete Buttons */
+    page.addEventListener('click', (e) => {
+      const btn = e.target.closest('.delete-btn, .btn-dash-delete');
+      if (!btn) return;
+      e.stopPropagation();
 
-        _showDeleteConfirmation(no, cust, amount, () => {
-          if (typeof DB !== 'undefined') {
-            const res = DB.deleteBill(id);
-            if (res.success) {
-              console.log("Database updated");
-              if (row && row.parentNode) row.remove();
+      const id     = btn.dataset.id;
+      const no     = btn.dataset.no || id;
+      const cust   = btn.dataset.cust || '';
+      const amount = btn.dataset.amount || '';
+      const row    = btn.closest('.dash-bill-row');
 
-              const newStats = DB.stats();
-              const elBills = document.getElementById('stat-today-bills');
-              const elRev   = document.getElementById('stat-today-rev');
-              const elCust  = document.getElementById('stat-customers');
-              const elTot   = document.getElementById('stat-total-bills');
+      if (btn.classList.contains('btn-dash-perm-delete')) return; // handled separately below
 
-              if (elBills) elBills.textContent = newStats.todayBills;
-              if (elRev)   elRev.textContent   = fmtINR(newStats.todayRevenue);
-              if (elCust)  elCust.textContent  = newStats.totalCustomers;
-              if (elTot)   elTot.textContent   = newStats.totalBills;
+      _showDeleteConfirmation(no, cust, amount, () => {
+        if (typeof DB !== 'undefined') {
+          const res = DB.deleteBill(id);
+          if (res && res.success) {
+            if (row && row.parentNode) row.remove();
 
-              _showToast('🗑️ Bill deleted successfully', 'success', 3200);
-            }
+            const newStats = DB.stats();
+            const elBills = document.getElementById('stat-today-bills');
+            const elRev   = document.getElementById('stat-today-rev');
+            const elCust  = document.getElementById('stat-customers');
+            const elTot   = document.getElementById('stat-total-bills');
+
+            if (elBills) elBills.textContent = newStats.todayBills;
+            if (elRev)   elRev.textContent   = fmtINR(newStats.todayRevenue);
+            if (elCust)  elCust.textContent  = newStats.totalCustomers;
+            if (elTot)   elTot.textContent   = newStats.totalBills;
+
+            _showToast('🗑️ Bill deleted successfully', 'success', 3200);
           }
-        });
+        }
       });
     });
 
