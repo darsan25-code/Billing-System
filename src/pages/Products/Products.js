@@ -462,7 +462,7 @@ const ProductsPage = (() => {
 
         <div class="prod-modal-footer">
           <button class="modal-btn modal-btn-cancel" id="modal-cancel-btn">Cancel</button>
-          <button class="modal-btn modal-btn-save"   id="modal-save-btn">
+          <button class="modal-btn modal-btn-save"   id="saveProductBtn">
             ${editId ? '✔ Update Product' : '＋ Save Product'}
           </button>
         </div>
@@ -488,10 +488,45 @@ const ProductsPage = (() => {
     priceEl?.addEventListener('input', _updateMargin);
     _updateMargin();
 
-    /* Wire modal controls */
-    _$('modal-close-btn')?.addEventListener('click',  _closeModal);
-    _$('modal-cancel-btn')?.addEventListener('click', _closeModal);
-    _$('modal-save-btn')?.addEventListener('click',   () => _saveProduct(editId));
+    function initializeProductModalEvents() {
+      const btn = document.getElementById("saveProductBtn");
+      console.log("Checked saveProductBtn element:", btn);
+
+      const nameInp = _$('pf-name');
+      nameInp?.addEventListener('input', () => {
+        const val = (nameInp.value || '').trim();
+        if (val.length >= 2) {
+          nameInp.classList.remove('pf-invalid');
+          const errEl = nameInp.closest('.form-field')?.querySelector('.pf-error');
+          if (errEl) errEl.remove();
+        }
+      });
+
+      ['pf-hsn', 'pf-unit', 'pf-price', 'pf-stock'].forEach(id => {
+        const inputEl = _$(id);
+        const clearErr = () => {
+          inputEl.classList.remove('pf-invalid');
+          const errEl = inputEl.closest('.form-field')?.querySelector('.pf-error');
+          if (errEl) errEl.remove();
+        };
+        inputEl?.addEventListener('input', clearErr);
+        inputEl?.addEventListener('change', clearErr);
+      });
+
+      document
+        .getElementById("saveProductBtn")
+        ?.addEventListener("click", (e) => {
+            if (e && e.preventDefault) e.preventDefault();
+            console.log("Save Product button clicked");
+            console.log("Button click event triggered");
+            _saveProduct(editId);
+        });
+
+      _$('modal-close-btn')?.addEventListener('click',  _closeModal);
+      _$('modal-cancel-btn')?.addEventListener('click', _closeModal);
+    }
+
+    initializeProductModalEvents();
 
     overlay.addEventListener('click', (e) => { if (e.target === overlay) _closeModal(); });
 
@@ -501,6 +536,8 @@ const ProductsPage = (() => {
     _$('prod-form')?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
         e.preventDefault();
+        console.log("Save Product button clicked via Enter key");
+        console.log("Button click event triggered");
         _saveProduct(editId);
       }
     });
@@ -519,30 +556,43 @@ const ProductsPage = (() => {
 
   /* ── Save product ───────────────────────────────────────────── */
   function _saveProduct(editId = null) {
+    console.log("saveProduct() started");
+
     if (typeof DB === 'undefined') { _showToast('⚠️ Database not ready', 'error'); return; }
 
-    const name         = (_$('pf-name')?.value     || '').trim();
+    console.log("Validation step...");
+
+    const nameVal      = (_$('pf-name')?.value     || '').trim();
     const model        = (_$('pf-model')?.value    || '').trim();
     const brand        = (_$('pf-brand')?.value    || '').trim();
     const category     = _$('pf-category')?.value  || '';
-    const hsn          = (_$('pf-hsn')?.value      || '').trim();
-    const unit         = _$('pf-unit')?.value      || '';
+    const hsnVal       = (_$('pf-hsn')?.value      || '').trim();
+    const unitVal      = _$('pf-unit')?.value      || '';
     const gst          = parseFloat(_$('pf-gst')?.value)      || 0;
     const purchasePrice= parseFloat(_$('pf-purchase')?.value) || 0;
-    const rate         = parseFloat(_$('pf-price')?.value)    || 0;
-    const stock        = parseFloat(_$('pf-stock')?.value)    || 0;
+    const priceRaw     = _$('pf-price')?.value;
+    const stockRaw     = _$('pf-stock')?.value;
+    const rate         = parseFloat(priceRaw);
+    const stock        = parseFloat(stockRaw);
     const minStock     = parseFloat(_$('pf-minstock')?.value) || 10;
 
     /* Validation */
     const errs = [];
-    if (!name || name.length < 2) errs.push({ id:'pf-name',  msg:'Product name is required (min 2 characters)' });
-    if (!hsn)                    errs.push({ id:'pf-hsn',   msg:'HSN code is required' });
-    if (!unit)                   errs.push({ id:'pf-unit',  msg:'Please select a unit' });
-    if (rate <= 0)               errs.push({ id:'pf-price', msg:'Selling price must be greater than ₹ 0' });
+    if (!nameVal || nameVal.length < 2) errs.push({ id:'pf-name',  msg:'Product name minimum 2 characters required' });
+    if (!hsnVal)                         errs.push({ id:'pf-hsn',   msg:'HSN code is required' });
+    if (!priceRaw || isNaN(rate) || rate <= 0) errs.push({ id:'pf-price', msg:'Selling price is required' });
+    if (!unitVal)                        errs.push({ id:'pf-unit',  msg:'Unit is required' });
+    if (stockRaw === '' || stockRaw === null || stockRaw === undefined || isNaN(stock)) {
+      errs.push({ id:'pf-stock', msg:'Opening stock is required' });
+    }
+
+    document.querySelectorAll('.pf-error').forEach(el => el.remove());
+    document.querySelectorAll('.pf-invalid').forEach(el => el.classList.remove('pf-invalid'));
 
     if (errs.length > 0) {
-      document.querySelectorAll('.pf-error').forEach(el => el.remove());
-      document.querySelectorAll('.pf-invalid').forEach(el => el.classList.remove('pf-invalid'));
+      console.log("Validation failed!");
+      alert("Validation failed");
+
       errs.forEach(e => {
         const inp = _$(e.id);
         if (!inp) return;
@@ -552,22 +602,78 @@ const ProductsPage = (() => {
         el.textContent = e.msg;
         inp.closest('.form-field')?.appendChild(el);
       });
+      const errorMsg = "❌ Please fill all required fields";
+      _showToast(errorMsg, 'error', 2000);
+      if (typeof window.showToast === 'function' && window.showToast !== _showToast) {
+        window.showToast(errorMsg, 'error', 2000);
+      }
       _$(errs[0].id)?.focus();
       return;
     }
 
-    const data = { name, model, brand, category, hsn, unit, gst, purchasePrice, rate, stock, minStock };
+    /* Duplicate check */
+    if (!editId && typeof DB !== 'undefined' && DB.Products) {
+      const existing = DB.Products.all().find(
+        p => (p.name || '').trim().toLowerCase() === nameVal.toLowerCase()
+      );
+      if (existing) {
+        console.log("Duplicate product detected!");
+        const dupMsg = "⚠️ Product already exists";
+        _showToast(dupMsg, 'error', 2000);
+        if (typeof window.showToast === 'function' && window.showToast !== _showToast) {
+          window.showToast(dupMsg, 'error', 2000);
+        }
+        _$('pf-name')?.classList.add('pf-invalid');
+        _$('pf-name')?.focus();
+        return;
+      }
+    }
+
+    console.log("Validation passed.");
+    console.log("Saving product data...");
+
+    const data = { name: nameVal, model, brand, category, hsn: hsnVal, unit: unitVal, gst, purchasePrice, rate, stock, minStock };
 
     if (editId) {
       DB.Products.update(editId, data);
-      _showToast(`✅ "${name}" updated successfully`, 'success');
+      _closeModal();
     } else {
       DB.Products.insert(data);
-      _showToast(`✅ "${name}" added to product catalogue`, 'success');
+      _resetForm();
     }
 
-    _closeModal();
+    console.log("Updating table...");
     _renderTable();
+
+    console.log("Showing success toast...");
+    const successMsg = "✅ Product saved successfully";
+    _showToast(successMsg, "success", 2000);
+    if (typeof window.showToast === 'function' && window.showToast !== _showToast) {
+      window.showToast(successMsg, "success", 2000);
+    }
+  }
+
+  function _resetForm() {
+    const setVal = (id, val) => { const el = _$(id); if (el) el.value = val; };
+    setVal('pf-name', '');
+    setVal('pf-model', '');
+    setVal('pf-brand', '');
+    setVal('pf-category', '');
+    setVal('pf-hsn', '');
+    setVal('pf-unit', '');
+    setVal('pf-purchase', '');
+    setVal('pf-price', '');
+    setVal('pf-gst', '0');
+    setVal('pf-stock', '0');
+    setVal('pf-minstock', '10');
+    setVal('pf-margin-display', '—');
+    const mgnEl = _$('pf-margin-display');
+    if (mgnEl) mgnEl.style.color = '';
+
+    document.querySelectorAll('.pf-error').forEach(el => el.remove());
+    document.querySelectorAll('.pf-invalid').forEach(el => el.classList.remove('pf-invalid'));
+
+    _$('pf-name')?.focus();
   }
 
   /* ══════════════════════════════════════════════════════════════
