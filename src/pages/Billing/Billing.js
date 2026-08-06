@@ -262,7 +262,7 @@ const BillingPage = (() => {
   /* ═══════════════════════════════════════════════════════════════
      ADD PRODUCT TO BILL
      ═══════════════════════════════════════════════════════════════ */
-  function _onProductSelected(product) {
+  function _onProductSelected(product, initialQty = 1) {
     const tbody = _$('bill-table-body');
     if (!tbody) return;
 
@@ -295,7 +295,7 @@ const BillingPage = (() => {
       <td class="col-hsn">${_esc(product.hsn || '—')}</td>
       <td class="col-qty">
         <input type="number" class="qty-input" id="qty-${_rowCounter}"
-          value="1" min="0.001" max="99999" step="1"
+          value="${initialQty}" min="0.001" max="99999" step="1"
           aria-label="Qty for ${_esc(product.name)}" />
       </td>
       <td class="col-unit">${_esc(product.unit || '—')}</td>
@@ -663,6 +663,11 @@ const BillingPage = (() => {
       if (inp) { inp.focus(); inp.select(); }
     });
 
+    KeyboardShortcuts.register('f6', (e) => {
+      e.preventDefault();
+      _openQuickAddModal();
+    });
+
     KeyboardShortcuts.register('ctrl+s', (e) => {
       e.preventDefault();
       _saveBill();
@@ -687,10 +692,227 @@ const BillingPage = (() => {
     });
 
     KeyboardShortcuts.register('escape', () => {
+      const qaOverlay = document.getElementById('quick-add-modal-overlay');
+      if (qaOverlay && qaOverlay.classList.contains('qa-overlay-visible')) {
+        _closeQuickAddModal();
+        return;
+      }
       _selectRow(null);
       const si = _$('product-search-input');
       if (si) si.value = '';
     });
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     QUICK ADD MODAL
+     ═══════════════════════════════════════════════════════════════ */
+  function _openQuickAddModal() {
+    let overlay = document.getElementById('quick-add-modal-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'quick-add-modal-overlay';
+      overlay.className = 'quick-add-modal-overlay';
+      overlay.innerHTML = `
+        <div class="quick-add-modal-card" role="dialog" aria-modal="true" aria-labelledby="qa-modal-title">
+          <div class="qa-modal-header">
+            <div class="qa-modal-title-wrap">
+              <span class="qa-modal-icon">⚡</span>
+              <div>
+                <h3 id="qa-modal-title" class="qa-modal-title">Quick Add Product</h3>
+                <span class="qa-modal-sub">Add item directly to current bill or save to products database</span>
+              </div>
+            </div>
+            <button type="button" class="qa-modal-close" id="qa-btn-close" aria-label="Close modal">&times;</button>
+          </div>
+          <form id="qa-form" onsubmit="return false;">
+            <div class="qa-modal-body">
+              <div class="qa-form-grid">
+                <!-- Product Name (required) -->
+                <div class="qa-field qa-field-full">
+                  <label for="qa-name">Product Name <span class="qa-req">*</span></label>
+                  <input type="text" id="qa-name" class="qa-input" placeholder="e.g. Cement, Asian Paint 1L" required autocomplete="off" />
+                </div>
+
+                <!-- Unit (dropdown) -->
+                <div class="qa-field">
+                  <label for="qa-unit">Unit</label>
+                  <select id="qa-unit" class="qa-select">
+                    <option value="Nos" selected>Nos</option>
+                    <option value="Box">Box</option>
+                    <option value="Piece">Piece</option>
+                    <option value="Kg">Kg</option>
+                    <option value="Bag">Bag</option>
+                    <option value="Sqft">Sqft</option>
+                  </select>
+                </div>
+
+                <!-- Selling Price (required) -->
+                <div class="qa-field">
+                  <label for="qa-price">Selling Price (₹) <span class="qa-req">*</span></label>
+                  <input type="number" id="qa-price" class="qa-input" placeholder="0.00" min="0" step="any" required />
+                </div>
+
+                <!-- GST % (default 0%) -->
+                <div class="qa-field">
+                  <label for="qa-gst">GST %</label>
+                  <select id="qa-gst" class="qa-select">
+                    <option value="0" selected>0%</option>
+                    <option value="5">5%</option>
+                    <option value="12">12%</option>
+                    <option value="18">18%</option>
+                    <option value="28">28%</option>
+                  </select>
+                </div>
+
+                <!-- Quantity (default 1) -->
+                <div class="qa-field">
+                  <label for="qa-qty">Quantity</label>
+                  <input type="number" id="qa-qty" class="qa-input" value="1" min="0.001" step="any" required />
+                </div>
+
+                <!-- HSN Code (Optional) -->
+                <div class="qa-field">
+                  <label for="qa-hsn">HSN Code <span class="qa-opt">(Optional)</span></label>
+                  <input type="text" id="qa-hsn" class="qa-input" placeholder="e.g. 2523" autocomplete="off" />
+                </div>
+
+                <!-- Brand (Optional) -->
+                <div class="qa-field">
+                  <label for="qa-brand">Brand <span class="qa-opt">(Optional)</span></label>
+                  <input type="text" id="qa-brand" class="qa-input" placeholder="e.g. UltraTech, Berger" autocomplete="off" />
+                </div>
+              </div>
+            </div>
+
+            <div class="qa-modal-footer">
+              <button type="button" id="qa-btn-cancel" class="qa-btn qa-btn-cancel">Cancel</button>
+              <div class="qa-footer-actions">
+                <button type="button" id="qa-btn-add-only" class="qa-btn qa-btn-secondary">Add to Bill</button>
+                <button type="button" id="qa-btn-save-and-add" class="qa-btn qa-btn-primary">Save to Products &amp; Add to Bill</button>
+              </div>
+            </div>
+          </form>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+
+      _$('qa-btn-close')?.addEventListener('click', _closeQuickAddModal);
+      _$('qa-btn-cancel')?.addEventListener('click', _closeQuickAddModal);
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) _closeQuickAddModal();
+      });
+
+      _$('qa-btn-add-only')?.addEventListener('click', () => _handleQuickAddSubmit(false));
+      _$('qa-btn-save-and-add')?.addEventListener('click', () => _handleQuickAddSubmit(true));
+
+      overlay.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+          e.preventDefault();
+          _handleQuickAddSubmit(false);
+        }
+      });
+    }
+
+    _$('qa-name').value = '';
+    _$('qa-unit').value = 'Nos';
+    _$('qa-price').value = '';
+    _$('qa-gst').value = '0';
+    _$('qa-qty').value = '1';
+    _$('qa-hsn').value = '';
+    _$('qa-brand').value = '';
+
+    overlay.classList.add('qa-overlay-visible');
+
+    setTimeout(() => {
+      const nameInput = _$('qa-name');
+      if (nameInput) {
+        nameInput.focus();
+        nameInput.select();
+      }
+    }, 50);
+  }
+
+  function _closeQuickAddModal() {
+    const overlay = document.getElementById('quick-add-modal-overlay');
+    if (overlay) {
+      overlay.classList.remove('qa-overlay-visible');
+    }
+    setTimeout(() => {
+      const searchInp = document.getElementById('product-search-input');
+      if (searchInp) {
+        searchInp.focus();
+      }
+    }, 50);
+  }
+
+  function _handleQuickAddSubmit(saveToDb) {
+    const nameInput  = _$('qa-name');
+    const priceInput = _$('qa-price');
+
+    const name  = (nameInput?.value  || '').trim();
+    const rate  = parseFloat(priceInput?.value);
+    const unit  = _$('qa-unit')?.value || 'Nos';
+    const gst   = parseFloat(_$('qa-gst')?.value) || 0;
+    const qty   = parseFloat(_$('qa-qty')?.value) || 1;
+    const hsn   = (_$('qa-hsn')?.value || '').trim();
+    const brand = (_$('qa-brand')?.value || '').trim();
+
+    if (!name) {
+      _showToast('⚠️ Please enter product name', 'warning');
+      if (nameInput) nameInput.focus();
+      return;
+    }
+
+    if (isNaN(rate) || rate < 0 || priceInput?.value === '') {
+      _showToast('⚠️ Please enter a valid selling price', 'warning');
+      if (priceInput) priceInput.focus();
+      return;
+    }
+
+    if (qty <= 0) {
+      _showToast('⚠️ Quantity must be greater than 0', 'warning');
+      _$('qa-qty')?.focus();
+      return;
+    }
+
+    let productObj = {
+      id: '',
+      name,
+      unit,
+      rate,
+      gst,
+      hsn,
+      brand,
+      stock: 0,
+    };
+
+    if (saveToDb) {
+      if (typeof DB !== 'undefined' && DB.Products) {
+        const savedProd = DB.Products.insert({
+          name,
+          unit,
+          rate,
+          purchasePrice: 0,
+          gst,
+          hsn,
+          brand,
+          stock: 0,
+        });
+        if (savedProd) {
+          productObj = savedProd;
+        }
+      }
+      const si = _$('product-search-input');
+      if (si && typeof ProductSearch !== 'undefined' && typeof DB !== 'undefined') {
+        ProductSearch.init(si, _onProductSelected, DB.Products.all());
+      }
+    }
+
+    _onProductSelected(productObj, qty);
+
+    _showToast('Item added successfully', 'success', 2200);
+
+    _closeQuickAddModal();
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -952,6 +1174,7 @@ const BillingPage = (() => {
           <div class="sidebar-shortcuts">
             <div class="summary-section-label" style="margin-bottom:10px">Keyboard Shortcuts</div>
             <div class="sb-shortcut-row"><kbd>F2</kbd><span>Focus search</span></div>
+            <div class="sb-shortcut-row"><kbd>F6</kbd><span>Quick Add</span></div>
             <div class="sb-shortcut-row"><kbd>Ctrl+S</kbd><span>Save bill</span></div>
             <div class="sb-shortcut-row"><kbd>Ctrl+P</kbd><span>Print bill</span></div>
             <div class="sb-shortcut-row"><kbd>Ctrl+N</kbd><span>New bill</span></div>
@@ -1018,6 +1241,11 @@ const BillingPage = (() => {
 
     _$('btt-gst')?.addEventListener('click',    () => _toggleBillType(true));
     _$('btt-normal')?.addEventListener('click', () => _toggleBillType(false));
+
+    _$('btn-quick-add')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      _openQuickAddModal();
+    });
 
     _$('bill-discount-input')?.addEventListener('input', _recalcBillTotals);
 
