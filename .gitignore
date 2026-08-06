@@ -1,0 +1,12 @@
+# Dependencies & build output
+node_modules/
+dist/
+cache/
+logs/
+temp/
+.DS_Store
+
+# DO NOT IGNORE backup/, invoices/, reports/ per project specification
+!backup/
+!invoices/
+!reports/

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Billing System for Sree Vel Murugan Hardware and Tiles" />
+  <title>Sree Vel Murugan Hardware and Tiles – Billing System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="src/styles/main.css" />
+  <style>
+    html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar"></aside>
+
+    <!-- Main content area -->
+    <div class="content-wrapper">
+
+      <!-- Top Navbar -->
+      <header id="navbar" class="navbar"></header>
+
+      <!-- Page content is injected here by the router -->
+      <main id="page-content" class="page-content"></main>
+
+    </div>
+  </div>
+
+  <!-- Data / sample products (must load before components) -->
+  <script src="src/database/products/products.js"></script>
+
+  <!-- Utilities (load early so pages & components can use them) -->
+  <script src="src/utils/KeyboardShortcuts.js"></script>
+  <script src="src/utils/BillingCalculator.js"></script>
+  <script src="src/database/diskStorage.js"></script>
+  <script src="src/database/db.js"></script>
+  <script src="src/utils/helpers.js"></script>
+
+  <!-- Component scripts -->
+  <script src="src/components/Sidebar/Sidebar.js"></script>
+  <script src="src/components/Navbar/Navbar.js"></script>
+  <script src="src/components/ProductSearch/ProductSearch.js"></script>
+  <script src="src/components/BillTable/BillTable.js"></script>
+  <script src="src/components/InvoicePreview/InvoicePreview.js"></script>
+
+  <!-- Page scripts -->
+  <script src="src/pages/Dashboard/Dashboard.js"></script>
+  <script src="src/pages/Billing/Billing.js"></script>
+  <script src="src/pages/Products/Products.js"></script>
+  <script src="src/pages/Customers/Customers.js"></script>
+  <script src="src/pages/Reports/Reports.js"></script>
+  <script src="src/pages/Settings/Settings.js"></script>
+
+  <!-- Utilities & App entry point -->
+  <script src="src/utils/storage-helper.js"></script>
+  <script src="src/utils/folder-setup.js"></script>
+  <script src="src/utils/export-helper.js"></script>
+  <script src="src/utils/invoice-archiver.js"></script>
+  <script src="src/utils/safety-checks.js"></script>
+  <script src="src/database/database.js"></script>
+  <script src="src/utils/router.js"></script>
+  <script src="src/app.js"></script>
+</body>
+</html>

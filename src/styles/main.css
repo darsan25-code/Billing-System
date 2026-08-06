@@ -1,0 +1,444 @@
+/* ============================================================
+   main.css – Global layout & Print Invoice styles
+   Project: Sree Vel Murugan Hardware and Tiles – Billing System
+   ============================================================ */
+
+/* ---------- Reset ---------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ---------- App shell (sidebar + content) ---------- */
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #f4f6f9;
+  color: #0f172a;
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: 240px;
+  min-width: 240px;
+  height: 100vh;
+  background: #0f172a;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+/* ---------- Right-hand wrapper ---------- */
+.content-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---------- Navbar ---------- */
+.navbar {
+  height: 56px;
+  min-height: 56px;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+}
+
+/* ---------- Page content ---------- */
+.page-content {
+  flex: 1;
+  overflow: hidden;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-placeholder {
+  font-size: 1.6rem;
+  font-weight: 600;
+  color: #555;
+  opacity: 0.6;
+  padding: 32px;
+}
+
+/* ============================================================
+   INVOICE PREVIEW MODAL & PRINT STYLES
+   ============================================================ */
+.invoice-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(4px);
+  z-index: 99999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.invoice-modal-container {
+  background: #ffffff;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 820px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: auto;
+}
+
+/* Toolbar */
+.invoice-toolbar {
+  background: #0f172a;
+  color: #fff;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.invoice-toolbar-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.inv-no-pill {
+  background: #f59e0b;
+  color: #0f172a;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-family: monospace;
+}
+
+.invoice-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.inv-btn {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.inv-btn-print {
+  background: #f59e0b;
+  color: #0f172a;
+}
+.inv-btn-print:hover { background: #d97706; }
+
+.inv-btn-pdf {
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.25);
+}
+.inv-btn-pdf:hover { background: rgba(255,255,255,0.25); }
+
+.inv-btn-close {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+.inv-btn-close:hover { background: rgba(239, 68, 68, 0.4); color: #fff; }
+
+/* Printable Invoice Document */
+.invoice-document {
+  padding: 32px 40px;
+  background: #fff;
+  color: #0f172a;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.inv-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.inv-shop-brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.inv-logo-box {
+  background: #0f172a;
+  color: #f59e0b;
+  font-size: 1.1rem;
+  font-weight: 900;
+  padding: 10px 14px;
+  border-radius: 8px;
+  letter-spacing: 0.05em;
+}
+
+.inv-shop-title h1 {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.inv-shop-title p {
+  font-size: 0.78rem;
+  color: #475569;
+  margin: 2px 0 4px 0;
+}
+
+.inv-shop-meta {
+  font-size: 0.72rem;
+  color: #64748b;
+}
+
+.inv-type-badge {
+  background: #0f172a;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 6px 14px;
+  border-radius: 6px;
+  letter-spacing: 0.08em;
+}
+
+.inv-divider {
+  height: 2px;
+  background: #0f172a;
+  margin: 16px 0;
+}
+
+.inv-meta-grid {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.inv-meta-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.inv-cust-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 2px;
+}
+
+.inv-cust-phone {
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.inv-meta-tbl {
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.inv-meta-tbl td {
+  padding: 2px 6px;
+  color: #475569;
+}
+
+.inv-meta-tbl td strong {
+  color: #0f172a;
+}
+
+/* Line Items Table */
+.inv-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+  font-size: 0.82rem;
+}
+
+.inv-items-table th {
+  background: #f1f5f9;
+  color: #0f172a;
+  font-weight: 700;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+}
+
+.inv-items-table td {
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  color: #1e293b;
+}
+
+.txt-center { text-align: center; }
+.txt-right  { text-align: right; }
+.txt-mono   { font-family: monospace; }
+.font-bold  { font-weight: 700; }
+
+.inv-item-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+/* Summary Box */
+.inv-summary-wrap {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.inv-words-box {
+  flex: 1;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.words-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+}
+
+.words-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 4px 0 10px 0;
+  font-style: italic;
+}
+
+.inv-terms-note {
+  font-size: 0.7rem;
+  color: #64748b;
+  line-height: 1.4;
+  border-top: 1px dashed #cbd5e1;
+  padding-top: 8px;
+}
+
+.inv-totals-box {
+  width: 280px;
+}
+
+.inv-totals-tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.inv-totals-tbl td {
+  padding: 4px 8px;
+  color: #334155;
+}
+
+.highlight-row td {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.grand-total-row td {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #0f172a;
+  border-top: 2px solid #0f172a;
+  border-bottom: 2px solid #0f172a;
+  padding: 8px;
+  background: #f8fafc;
+}
+
+.inv-footer-sig {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 32px;
+  padding-top: 16px;
+}
+
+.sig-block {
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.sig-right {
+  text-align: right;
+}
+
+.sig-space {
+  height: 40px;
+}
+
+/* ============================================================
+   @media print Rules
+   ============================================================ */
+@media print {
+  /* Hide non-printable UI elements */
+  body * {
+    visibility: hidden;
+  }
+  .print-hide,
+  .sidebar,
+  .navbar,
+  .billing-header-bar,
+  .billing-left,
+  .billing-right,
+  .app-shell {
+    display: none !important;
+  }
+
+  /* Show document only */
+  #invoice-modal-overlay,
+  #printable-invoice,
+  #printable-invoice * {
+    visibility: visible;
+  }
+
+  #invoice-modal-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    background: #fff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .invoice-modal-container {
+    box-shadow: none !important;
+    max-width: 100% !important;
+    border-radius: 0 !important;
+  }
+
+  .invoice-document {
+    padding: 15mm 15mm !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm;
+  }
+}
