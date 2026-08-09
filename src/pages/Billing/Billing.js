@@ -22,6 +22,7 @@ const BillingPage = (() => {
   let _lastSavedBill= null;   // Keeps track of last saved bill object
   let _editingBillId= null;   // ID of bill currently being edited
   let _editingBillNo= null;   // Bill number of bill currently being edited
+  let _isRestoringDraft = false; // Prevents draft save loops during restoration
 
   /* ── F6 Global Keyboard Trap ── */
   document.addEventListener('keydown', (e) => {
@@ -117,6 +118,7 @@ const BillingPage = (() => {
     _updateBadge();
     if (_itemCount === 0) _showEmptyState();
     else _recalcBillTotals();
+    _saveDraft();
     _showToast('🗑 Row removed from bill', 'info', 1600);
   }
 
@@ -132,9 +134,12 @@ const BillingPage = (() => {
     const discPct = parseFloat(tr.querySelector('.disc-input')?.value) || 0;
     const rateVal = tr.querySelector('.rate-input')?.value;
     const rate    = (rateVal !== undefined && rateVal !== '' && !isNaN(parseFloat(rateVal))) ? parseFloat(rateVal) : (parseFloat(tr.dataset.rate) || 0);
-    const gstPct  = parseFloat(tr.dataset.gstPct) || 0;
 
-    tr.dataset.rate = rate;
+    const gstVal  = tr.querySelector('.gst-input')?.value;
+    const gstPct  = (gstVal !== undefined && gstVal !== '' && !isNaN(parseFloat(gstVal))) ? parseFloat(gstVal) : (parseFloat(tr.dataset.gstPct) || 0);
+
+    tr.dataset.rate   = rate;
+    tr.dataset.gstPct = gstPct;
 
     const res = BC.calcRow(qty, rate, discPct, gstPct, _isGstBill);
 
@@ -155,6 +160,7 @@ const BillingPage = (() => {
     }
 
     _recalcBillTotals();
+    _saveDraft();
   }
 
   function _recalcBillTotals() {
@@ -224,7 +230,7 @@ const BillingPage = (() => {
     if (_itemCount === 0) _recalcBillTotals();
   }
 
-  function _toggleBillType(isGst) {
+  function _toggleBillType(isGst, isSilent = false) {
     _isGstBill = isGst;
 
     _$('btt-gst')?.classList.toggle('btt-active', isGst);
@@ -238,7 +244,10 @@ const BillingPage = (() => {
 
     _setText('summary-bill-type', isGst ? 'GST Bill' : 'Normal Bill');
     _recalcAllRows();
-    _showToast(isGst ? '🧾 Switched to GST Bill' : '📄 Switched to Normal Bill', 'info', 1800);
+    if (!isSilent) {
+      _showToast(isGst ? '🧾 Switched to GST Bill' : '📄 Switched to Normal Bill', 'info', 1800);
+    }
+    _saveDraft();
   }
 
   function _refreshRowNums() {
@@ -266,7 +275,7 @@ const BillingPage = (() => {
     if (!inputEl) return;
     inputEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
-      const all = Array.from(document.querySelectorAll('#bill-table-body .qty-input, #bill-table-body .rate-input, #bill-table-body .disc-input'));
+      const all = Array.from(document.querySelectorAll('#bill-table-body .qty-input, #bill-table-body .rate-input, #bill-table-body .disc-input, #bill-table-body .gst-input'));
       if (all.length === 0) return;
       const idx = all.indexOf(e.target);
       if (idx === -1) return;
@@ -285,7 +294,7 @@ const BillingPage = (() => {
   /* ═══════════════════════════════════════════════════════════════
      ADD PRODUCT TO BILL
      ═══════════════════════════════════════════════════════════════ */
-  function _onProductSelected(product, initialQty = 1) {
+  function _onProductSelected(product, initialQty = 1, options = {}) {
     const tbody = _$('bill-table-body');
     if (!tbody) return;
 
@@ -296,12 +305,15 @@ const BillingPage = (() => {
     _itemCount++;
 
     const initialRate = (product.rate !== undefined && product.rate !== '' && !isNaN(parseFloat(product.rate))) ? parseFloat(product.rate) : 0;
+    const productGst  = (product.gst !== undefined && product.gst !== null && !isNaN(parseFloat(product.gst))) ? parseFloat(product.gst) : 0;
+    const effectiveGst = (productGst > 0) ? productGst : (_isGstBill ? 18 : 0);
 
     const tr = document.createElement('tr');
     tr.className          = 'bill-row bill-row-animate';
     tr.dataset.rowId      = _rowCounter;
     tr.dataset.rate       = initialRate;
-    tr.dataset.gstPct     = product.gst || 0;
+    tr.dataset.productGst = productGst;
+    tr.dataset.gstPct     = effectiveGst;
     tr.dataset.productId  = product.id   || '';
     tr.dataset.productName= product.name || '';
     tr.dataset.hsn        = product.hsn  || '';
@@ -335,7 +347,12 @@ const BillingPage = (() => {
           value="0" min="0" max="100" step="0.5" placeholder="0"
           aria-label="Disc% for ${_esc(product.name)}" />
       </td>
-      <td class="col-gst gst-only-col gst-pct-cell">${product.gst || 0}%</td>
+      <td class="col-gst gst-only-col gst-pct-cell">
+        <input type="number" class="gst-input" id="gst-${_rowCounter}"
+          value="${effectiveGst}" min="0" max="100" step="0.5" placeholder="0"
+          aria-label="GST% for ${_esc(product.name)}"
+          style="width:58px;padding:4px 6px;border:1.5px solid #cbd5e1;border-radius:4px;font-weight:700;color:#0f172a;text-align:right" />
+      </td>
       <td class="col-gst gst-only-col gst-amt-cell cell-pending">—</td>
       <td class="col-total total-cell cell-pending">—</td>
       <td class="col-action">
@@ -347,10 +364,28 @@ const BillingPage = (() => {
     const qtyInput  = tr.querySelector('.qty-input');
     const rateInput = tr.querySelector('.rate-input');
     const discInput = tr.querySelector('.disc-input');
+    const gstInput  = tr.querySelector('.gst-input');
 
     const _onChange = () => _calcAndUpdateRow(tr);
     qtyInput.addEventListener('input',  _onChange);
     discInput.addEventListener('input', _onChange);
+
+    if (gstInput) {
+      gstInput.addEventListener('input', () => {
+        let val = parseFloat(gstInput.value);
+        if (isNaN(val) || val < 0) val = 0;
+        tr.dataset.gstPct = val;
+        _calcAndUpdateRow(tr);
+      });
+      _wireTabNav(gstInput);
+      gstInput.addEventListener('focus', () => _selectRow(tr));
+      gstInput.addEventListener('blur', () => setTimeout(() => {
+        const f = document.activeElement;
+        if (!f || (!f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
+          _selectRow(null);
+        }
+      }, 80));
+    }
 
     rateInput.addEventListener('input', () => {
       let val = parseFloat(rateInput.value);
@@ -365,7 +400,7 @@ const BillingPage = (() => {
     _wireTabNav(rateInput);
     _wireTabNav(discInput);
 
-    tr.querySelectorAll('td:not(.col-action):not(.col-qty):not(.col-disc):not(.col-rate)').forEach(td => {
+    tr.querySelectorAll('td:not(.col-action):not(.col-qty):not(.col-disc):not(.col-rate):not(.col-gst)').forEach(td => {
       td.addEventListener('click', () => _selectRow(tr));
     });
 
@@ -375,7 +410,7 @@ const BillingPage = (() => {
 
     const _onBlur = () => setTimeout(() => {
       const f = document.activeElement;
-      if (!f || (!f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input'))) {
+      if (!f || (!f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
         _selectRow(null);
       }
     }, 80);
@@ -393,17 +428,24 @@ const BillingPage = (() => {
     _updateBadge();
     _calcAndUpdateRow(tr);
 
-    // Show toast for added product
-    _showToast(`Added: ${product.name}`, 'success', 2200);
+    if (!options.isSilent) {
+      // Show toast for added product
+      _showToast(`Added: ${product.name}`, 'success', 2200);
 
-    // Auto-clear and auto-focus search bar so user can directly type next product without mouse!
-    setTimeout(() => {
-      const searchInp = document.getElementById('product-search-input');
-      if (searchInp) {
-        searchInp.value = '';
-        searchInp.focus();
-      }
-    }, 50);
+      // Auto-clear and auto-focus search bar so user can directly type next product without mouse!
+      setTimeout(() => {
+        const qaOverlay = document.getElementById('quick-add-modal-overlay');
+        if (qaOverlay && qaOverlay.classList.contains('qa-overlay-visible')) {
+          // Quick add modal is open; keep focus inside Quick Add Product Name field!
+          return;
+        }
+        const searchInp = document.getElementById('product-search-input');
+        if (searchInp) {
+          searchInp.value = '';
+          searchInp.focus();
+        }
+      }, 50);
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -411,18 +453,20 @@ const BillingPage = (() => {
      ═══════════════════════════════════════════════════════════════ */
 
   function _collectBillData() {
-    const customerName  = (_$('customer-name')?.value  || '').trim();
-    const customerPhone = (_$('customer-phone')?.value || '').trim();
-    const paymentMode   = _$('payment-mode-select')?.value || 'Cash';
-    const billDiscAmt   = parseFloat(_$('bill-discount-input')?.value) || 0;
-    const billNoText    = (_$('bill-number')?.textContent || '').replace('✓ Saved', '').trim();
+    const customerName    = (_$('customer-name')?.value  || '').trim().toUpperCase();
+    const customerPhone   = (_$('customer-phone')?.value || '').trim();
+    const customerAddress = (_$('customer-address')?.value || '').trim();
+    const paymentMode     = _$('payment-mode-select')?.value || 'Cash';
+    const billDiscAmt     = parseFloat(_$('bill-discount-input')?.value) || 0;
+    const billNoText      = (_$('bill-number')?.textContent || '').replace('✓ Saved', '').replace('SAVED ✓', '').replace('EDITING', '').trim();
 
     const rows = Array.from(document.querySelectorAll('#bill-table-body .bill-row'));
     const items = rows.map(tr => {
       const qty     = parseFloat(tr.querySelector('.qty-input')?.value)  || 0;
       const discPct = parseFloat(tr.querySelector('.disc-input')?.value) || 0;
       const rate    = parseFloat(tr.dataset.rate)   || 0;
-      const gstPct  = parseFloat(tr.dataset.gstPct) || 0;
+      const prodGst = parseFloat(tr.dataset.productGst) || 0;
+      const gstPct  = (prodGst > 0) ? prodGst : (_isGstBill ? 18 : 0);
       const calc    = BC ? BC.calcRow(qty, rate, discPct, gstPct, _isGstBill) : {};
       return {
         productId:   tr.dataset.productId   || null,
@@ -444,21 +488,9 @@ const BillingPage = (() => {
     }));
     const totals = BC ? BC.calcBillTotals(rowResults, billDiscAmt, _isGstBill) : {};
 
-    return { customerName, customerPhone, paymentMode, billNo: billNoText, items, totals };
+    return { customerName, customerPhone, customerAddress, paymentMode, billNo: billNoText, items, totals };
   }
 
-  /**
-   * Save Bill flow:
-   *  Validation: Bill number required, >= 1 item, quantity cannot be 0.
-   *  On success:
-   *   - STAY ON BILLING PAGE.
-   *   - Save customer, bill, items, reduce stock.
-   *   - Generate sequential bill number: SVMH-YYYYMM-NNNN.
-   *   - Show green header badge: ✓ Saved.
-   *   - Toast: "Bill SVMH-202608-0001 saved successfully"
-   *   - Disable Save button for 3 seconds.
-   *   - Show "View Invoice" button.
-   */
   function _saveBill() {
     console.log("Save clicked");
 
@@ -489,14 +521,15 @@ const BillingPage = (() => {
 
       if (typeof DB !== 'undefined' && typeof DB.updateBill === 'function') {
         result = DB.updateBill({
-          billId:        targetId,
-          customerName:  data.customerName,
-          customerPhone: data.customerPhone,
-          billType:      _isGstBill ? 'gst' : 'normal',
-          paymentMode:   data.paymentMode,
-          billNo:        targetNo,
-          items:         data.items,
-          totals:        data.totals,
+          billId:          targetId,
+          customerName:    data.customerName,
+          customerPhone:   data.customerPhone,
+          customerAddress: data.customerAddress,
+          billType:        _isGstBill ? 'gst' : 'normal',
+          paymentMode:     data.paymentMode,
+          billNo:          targetNo,
+          items:           data.items,
+          totals:          data.totals,
         });
       }
 
@@ -511,21 +544,23 @@ const BillingPage = (() => {
             const invNo = bills[index].invoiceNo || bills[index].billNo || editingInvoiceId;
             const updatedBill = {
               ...bills[index],
-              invoiceNo:     invNo,
-              billNo:        invNo,
-              customerName:  data.customerName || 'Walk-in Customer',
-              customerPhone: data.customerPhone || '',
-              paymentMode:   data.paymentMode,
-              paymentMethod: data.paymentMode,
-              billType:      _isGstBill ? 'gst' : 'normal',
-              items:         data.items,
-              itemCount:     data.items.length,
-              subtotal:      data.totals.subtotal || 0,
-              totalGst:      data.totals.totalGst || 0,
-              billDiscount:  data.totals.billDiscount || 0,
-              roundOff:      data.totals.roundOff || 0,
-              grandTotal:    data.totals.grandTotal || 0,
-              updatedAt:     new Date().toISOString(),
+              invoiceNo:       invNo,
+              billNo:          invNo,
+              customerName:    data.customerName || 'Walk-in Customer',
+              customerPhone:   data.customerPhone || '',
+              customerAddress: data.customerAddress || '',
+              address:         data.customerAddress || '',
+              paymentMode:     data.paymentMode,
+              paymentMethod:   data.paymentMode,
+              billType:        _isGstBill ? 'gst' : 'normal',
+              items:           data.items,
+              itemCount:       data.items.length,
+              subtotal:        data.totals.subtotal || 0,
+              totalGst:        data.totals.totalGst || 0,
+              billDiscount:    data.totals.billDiscount || 0,
+              roundOff:        data.totals.roundOff || 0,
+              grandTotal:      data.totals.grandTotal || 0,
+              updatedAt:       new Date().toISOString(),
             };
             bills[index] = updatedBill;
             localStorage.setItem('bills', JSON.stringify(bills));
@@ -560,19 +595,15 @@ const BillingPage = (() => {
     }
 
     /* ── 13. Normal Save Bill Flow (if editingInvoiceId is empty) ── */
-    if (!data.billNo || !data.billNo.trim()) {
-      _showToast('⚠️ Bill number is required.', 'warning');
-      return;
-    }
-
     const result = DB.saveBill({
-      customerName:  data.customerName,
-      customerPhone: data.customerPhone,
-      billType:      _isGstBill ? 'gst' : 'normal',
-      paymentMode:   data.paymentMode,
-      billNo:        data.billNo,
-      items:         data.items,
-      totals:        data.totals,
+      customerName:    data.customerName,
+      customerPhone:   data.customerPhone,
+      customerAddress: data.customerAddress,
+      billType:        _isGstBill ? 'gst' : 'normal',
+      paymentMode:     data.paymentMode,
+      billNo:          data.billNo,
+      items:           data.items,
+      totals:          data.totals,
     });
 
     if (!result || !result.success) {
@@ -582,6 +613,8 @@ const BillingPage = (() => {
 
     console.log("Database save success");
     localStorage.removeItem('svmh_bill_draft');
+    localStorage.removeItem('svmh_billing_draft');
+    localStorage.removeItem('billing_draft');
 
     _lastSavedBill = result.bill;
     const savedBillNo = result.bill.billNo;
@@ -684,6 +717,8 @@ const BillingPage = (() => {
       date:          _today(),
       customerName:  data.customerName || 'Walk-in Customer',
       customerPhone: data.customerPhone || '',
+      customerAddress: data.customerAddress || '',
+      address:       data.customerAddress || '',
       billType:      _isGstBill ? 'gst' : 'normal',
       items:         data.items,
       subtotal:      data.totals.subtotal      || 0,
@@ -709,6 +744,9 @@ const BillingPage = (() => {
     _editingBillId = null;
     _editingBillNo = null;
     localStorage.removeItem('editingInvoiceId');
+    localStorage.removeItem('billing_draft');
+    localStorage.removeItem('svmh_billing_draft');
+    localStorage.removeItem('svmh_bill_draft');
 
     const pageTitleH1 = document.querySelector('.billing-header-bar .page-title h1');
     if (pageTitleH1) {
@@ -717,7 +755,7 @@ const BillingPage = (() => {
 
     _showEmptyState();
 
-    ['customer-name','customer-phone'].forEach(id => {
+    ['customer-name','customer-phone','customer-address'].forEach(id => {
       const el = _$(id); if (el) el.value = '';
     });
     _updateWalkinBadge();
@@ -754,10 +792,12 @@ const BillingPage = (() => {
   function _updateWalkinBadge() {
     const name  = (_$('customer-name')?.value  || '').trim();
     const phone = (_$('customer-phone')?.value || '').trim();
+    const addr  = (_$('customer-address')?.value || '').trim();
     const badge = _$('walkin-badge');
-    const isWalkin = (!name && !phone);
+    const isWalkin = (!name && !phone && !addr);
     if (badge) badge.style.display = isWalkin ? 'inline-flex' : 'none';
     _setText('summary-customer', name || (phone ? phone : 'Walk-in Customer'));
+    _saveDraft();
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -836,32 +876,25 @@ const BillingPage = (() => {
           <form id="qa-form" onsubmit="return false;">
             <div class="qa-modal-body">
               <div class="qa-form-grid">
-                <!-- Product Name (required) -->
+                <!-- 1. Product Name (required) -->
                 <div class="qa-field qa-field-full">
                   <label for="qa-name">Product Name <span class="qa-req">*</span></label>
                   <input type="text" id="qa-name" class="qa-input" placeholder="e.g. Cement, Asian Paint 1L" required autocomplete="off" />
                 </div>
 
-                <!-- Unit (dropdown) -->
+                <!-- 2. Quantity (default 0) -->
                 <div class="qa-field">
-                  <label for="qa-unit">Unit</label>
-                  <select id="qa-unit" class="qa-select">
-                    <option value="Nos" selected>Nos</option>
-                    <option value="Box">Box</option>
-                    <option value="Piece">Piece</option>
-                    <option value="Kg">Kg</option>
-                    <option value="Bag">Bag</option>
-                    <option value="Sqft">Sqft</option>
-                  </select>
+                  <label for="qa-qty">Quantity</label>
+                  <input type="number" id="qa-qty" class="qa-input" value="0" min="0" step="any" required />
                 </div>
 
-                <!-- Selling Price (Optional) -->
+                <!-- 3. Selling Price / Rate (Optional) -->
                 <div class="qa-field">
                   <label for="qa-price">Selling Price (₹) <span class="qa-opt">(Optional)</span></label>
                   <input type="number" id="qa-price" class="qa-input" placeholder="0.00" min="0" step="any" />
                 </div>
 
-                <!-- GST % (default 0%) -->
+                <!-- 4. GST % (mouse-selectable) -->
                 <div class="qa-field">
                   <label for="qa-gst">GST %</label>
                   <select id="qa-gst" class="qa-select">
@@ -873,22 +906,29 @@ const BillingPage = (() => {
                   </select>
                 </div>
 
-                <!-- Quantity (default 0) -->
-                <div class="qa-field">
-                  <label for="qa-qty">Quantity</label>
-                  <input type="number" id="qa-qty" class="qa-input" value="0" min="0" step="any" required />
-                </div>
-
-                <!-- HSN Code (Optional) -->
+                <!-- 5. HSN Code (mouse-selectable) -->
                 <div class="qa-field">
                   <label for="qa-hsn">HSN Code <span class="qa-opt">(Optional)</span></label>
                   <input type="text" id="qa-hsn" class="qa-input" placeholder="e.g. 2523" autocomplete="off" />
                 </div>
 
-                <!-- Brand (Optional) -->
+                <!-- 6. Brand (mouse-selectable) -->
                 <div class="qa-field">
                   <label for="qa-brand">Brand <span class="qa-opt">(Optional)</span></label>
                   <input type="text" id="qa-brand" class="qa-input" placeholder="e.g. UltraTech, Berger" autocomplete="off" />
+                </div>
+
+                <!-- Unit (dropdown) -->
+                <div class="qa-field" style="display:none">
+                  <label for="qa-unit">Unit</label>
+                  <select id="qa-unit" class="qa-select">
+                    <option value="Nos" selected>Nos</option>
+                    <option value="Box">Box</option>
+                    <option value="Piece">Piece</option>
+                    <option value="Kg">Kg</option>
+                    <option value="Bag">Bag</option>
+                    <option value="Sqft">Sqft</option>
+                  </select>
                 </div>
               </div>
             </div>
@@ -914,16 +954,44 @@ const BillingPage = (() => {
       _$('qa-btn-add-only')?.addEventListener('click', () => _handleQuickAddSubmit(false));
       _$('qa-btn-save-and-add')?.addEventListener('click', () => _handleQuickAddSubmit(true));
 
+      /* Keydown Enter Navigation: Name -> Qty -> Price -> Submit */
+      const qaName = _$('qa-name');
+      const qaQty  = _$('qa-qty');
+      const qaPrice= _$('qa-price');
+
+      qaName?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          qaQty?.focus();
+          qaQty?.select();
+        }
+      });
+
+      qaQty?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          qaPrice?.focus();
+          qaPrice?.select();
+        }
+      });
+
+      qaPrice?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          _handleQuickAddSubmit(false);
+        }
+      });
+
+      qaQty?.addEventListener('focus', () => qaQty.select());
+      qaPrice?.addEventListener('focus', () => qaPrice.select());
+
       overlay.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
           e.preventDefault();
           _closeQuickAddModal();
-          return;
-        }
-        if (e.key === 'Enter') {
-          if (e.target.id === 'qa-btn-cancel' || e.target.id === 'qa-btn-save-and-add') return;
-          e.preventDefault();
-          _handleQuickAddSubmit(false);
         }
       });
     }
@@ -1034,9 +1102,13 @@ const BillingPage = (() => {
     const gstSelect = _$('qa-gst'); if (gstSelect) gstSelect.value = '0';
     const qtyInput = _$('qa-qty'); if (qtyInput) qtyInput.value = '0';
 
-    if (nameInput) {
-      nameInput.focus();
-    }
+    setTimeout(() => {
+      const qaNameInput = _$('qa-name');
+      if (qaNameInput) {
+        qaNameInput.focus();
+        try { qaNameInput.select(); } catch (err) {}
+      }
+    }, 80);
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -1101,6 +1173,16 @@ const BillingPage = (() => {
                 <div class="field-value">
                   <input id="customer-phone" type="tel"
                     placeholder="Enter phone number"
+                    autocomplete="off" />
+                </div>
+              </div>
+              <div class="bill-info-field">
+                <label for="customer-address">Customer Address
+                  <span class="field-optional">Optional</span>
+                </label>
+                <div class="field-value">
+                  <input id="customer-address" type="text"
+                    placeholder="Enter address"
                     autocomplete="off" />
                 </div>
               </div>
@@ -1325,6 +1407,7 @@ const BillingPage = (() => {
      RENDER
      ═══════════════════════════════════════════════════════════════ */
   function render(container) {
+    _isRestoringDraft = true;
 
     if (!_$('billing-css')) {
       const lnk = document.createElement('link');
@@ -1363,15 +1446,19 @@ const BillingPage = (() => {
       ProductSearch.init(si, _onProductSelected, prodList);
     }
 
-    _$('btt-gst')?.addEventListener('click',    () => _toggleBillType(true));
-    _$('btt-normal')?.addEventListener('click', () => _toggleBillType(false));
+    _$('btt-gst')?.addEventListener('click',    () => { _toggleBillType(true); _saveDraft(); });
+    _$('btt-normal')?.addEventListener('click', () => { _toggleBillType(false); _saveDraft(); });
 
     _$('btn-quick-add')?.addEventListener('click', (e) => {
       e.preventDefault();
       _openQuickAddModal();
     });
 
-    _$('bill-discount-input')?.addEventListener('input', _recalcBillTotals);
+    _$('bill-discount-input')?.addEventListener('input', () => {
+      _recalcBillTotals();
+      _saveDraft();
+    });
+    _$('payment-mode-select')?.addEventListener('change', _saveDraft);
 
     _$('btn-clear-main')?.addEventListener('click', () => {
       _clearAll();
@@ -1399,11 +1486,23 @@ const BillingPage = (() => {
       if (!e.target.closest('.bill-row') && !e.target.closest('.row-delete-btn')) _selectRow(null);
     });
 
-    ['customer-name', 'customer-phone'].forEach(id => {
-      _$(id)?.addEventListener('input', _updateWalkinBadge);
+    ['customer-name', 'customer-phone', 'customer-address'].forEach(id => {
+      const el = _$(id);
+      if (!el) return;
+      if (id === 'customer-name') {
+        el.addEventListener('input', () => {
+          const start = el.selectionStart;
+          const end = el.selectionEnd;
+          el.value = el.value.toUpperCase();
+          try { el.setSelectionRange(start, end); } catch (e) {}
+          _updateWalkinBadge();
+        });
+      } else {
+        el.addEventListener('input', _updateWalkinBadge);
+      }
     });
 
-    _toggleBillType(false);
+    _toggleBillType(false, true);
     _updateWalkinBadge();
     _registerShortcuts();
     _recalcBillTotals();
@@ -1416,9 +1515,145 @@ const BillingPage = (() => {
       } else {
         localStorage.removeItem('editingInvoiceId');
       }
+    } else {
+      _restoreDraft();
     }
 
+    _isRestoringDraft = false;
     setTimeout(() => { if (si) si.focus(); }, 80);
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     UNFINISHED BILL DRAFT PERSISTENCE
+     ═══════════════════════════════════════════════════════════════ */
+  function _saveDraft() {
+    if (_isRestoringDraft || _editingBillId || localStorage.getItem('editingInvoiceId')) return;
+    try {
+      const data = _collectBillData();
+      const hasCustomer = !!(data.customerName || data.customerPhone || data.customerAddress);
+      const hasItems = !!(data.items && data.items.length > 0);
+      const hasDiscount = !!(parseFloat(_$('bill-discount-input')?.value) || 0);
+
+      if (!hasCustomer && !hasItems && !hasDiscount) {
+        localStorage.removeItem('billing_draft');
+        localStorage.removeItem('svmh_billing_draft');
+        return;
+      }
+
+      const draft = {
+        billNo: data.billNo,
+        customerName: data.customerName,
+        customerPhone: data.customerPhone,
+        customerAddress: data.customerAddress,
+        paymentMode: data.paymentMode,
+        billDiscount: parseFloat(_$('bill-discount-input')?.value) || 0,
+        isGstBill: _isGstBill,
+        items: data.items.map(it => ({
+          productId: it.productId,
+          productName: it.productName,
+          hsn: it.hsn,
+          qty: it.qty,
+          unit: it.unit,
+          rate: it.rate,
+          discPct: it.discPct,
+          gstPct: it.gstPct,
+          baseAmount: it.baseAmount,
+          discountAmount: it.discountAmount,
+          taxableAmount: it.taxableAmount,
+          gstAmount: it.gstAmount,
+          rowTotal: it.rowTotal,
+        })),
+        savedAt: new Date().toISOString()
+      };
+
+      const jsonStr = JSON.stringify(draft);
+      localStorage.setItem('billing_draft', jsonStr);
+      localStorage.setItem('svmh_billing_draft', jsonStr);
+    } catch (e) {
+      console.error('[Billing] Error saving draft:', e);
+    }
+  }
+
+  function _restoreDraft() {
+    if (_editingBillId || localStorage.getItem('editingInvoiceId')) return false;
+    const raw = localStorage.getItem('billing_draft') || localStorage.getItem('svmh_billing_draft');
+    if (!raw) return false;
+    try {
+      const draft = JSON.parse(raw);
+      if (!draft) return false;
+
+      const hasCustomer = !!(draft.customerName || draft.customerPhone || draft.customerAddress);
+      const hasItems = !!(draft.items && draft.items.length > 0);
+      const hasDiscount = !!(draft.billDiscount);
+      if (!hasCustomer && !hasItems && !hasDiscount) return false;
+
+      _isRestoringDraft = true;
+
+      if (draft.billNo) {
+        _setText('bill-number', draft.billNo);
+        _setText('summary-bill-no', draft.billNo);
+      }
+
+      const custNameEl = _$('customer-name'); if (custNameEl) custNameEl.value = (draft.customerName || '').toUpperCase();
+      const custPhoneEl = _$('customer-phone'); if (custPhoneEl) custPhoneEl.value = draft.customerPhone || '';
+      const custAddrEl = _$('customer-address'); if (custAddrEl) custAddrEl.value = draft.customerAddress || '';
+      const paySelect = _$('payment-mode-select'); if (paySelect) paySelect.value = draft.paymentMode || 'Cash';
+      const discInput = _$('bill-discount-input'); if (discInput) discInput.value = draft.billDiscount || 0;
+
+      _toggleBillType(!!draft.isGstBill, true);
+
+      const name = (draft.customerName || '').trim();
+      const phone = (draft.customerPhone || '').trim();
+      const addr = (draft.customerAddress || '').trim();
+      const badge = _$('walkin-badge');
+      if (badge) badge.style.display = (!name && !phone && !addr) ? 'inline-flex' : 'none';
+      _setText('summary-customer', name || (phone ? phone : 'Walk-in Customer'));
+
+      if (draft.items && draft.items.length > 0) {
+        const tbody = _$('bill-table-body');
+        if (tbody) tbody.innerHTML = '';
+        _rowCounter = 0;
+        _itemCount = 0;
+
+        draft.items.forEach(it => {
+          _onProductSelected({
+            id: it.productId || '',
+            name: it.productName || it.name || 'Item',
+            rate: it.rate !== undefined ? it.rate : 0,
+            gst: it.gstPct !== undefined ? it.gstPct : 0,
+            hsn: it.hsn || '',
+            unit: it.unit || 'Nos',
+          }, it.qty || 1, { isSilent: true });
+
+          const lastRow = _$('bill-table-body')?.lastElementChild;
+          if (lastRow) {
+            if (it.rate !== undefined) {
+              const rateInp = lastRow.querySelector('.rate-input');
+              if (rateInp) rateInp.value = it.rate;
+              lastRow.dataset.rate = it.rate;
+            }
+            if (it.discPct !== undefined) {
+              const discEl = lastRow.querySelector('.disc-input');
+              if (discEl) discEl.value = it.discPct;
+            }
+            if (it.gstPct !== undefined) {
+              const gstInp = lastRow.querySelector('.gst-input');
+              if (gstInp) gstInp.value = it.gstPct;
+              lastRow.dataset.gstPct = it.gstPct;
+            }
+            _calcAndUpdateRow(lastRow);
+          }
+        });
+      }
+
+      _isRestoringDraft = false;
+      _recalcBillTotals();
+      return true;
+    } catch (e) {
+      console.error('[Billing] Error restoring draft:', e);
+      _isRestoringDraft = false;
+      return false;
+    }
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -1449,9 +1684,11 @@ const BillingPage = (() => {
 
     // Set Customer & Bill metadata
     const custNameEl = _$('customer-name');
-    if (custNameEl) custNameEl.value = bill.customerName || '';
+    if (custNameEl) custNameEl.value = (bill.customerName || '').toUpperCase();
     const custPhoneEl = _$('customer-phone');
     if (custPhoneEl) custPhoneEl.value = bill.customerPhone || '';
+    const custAddrEl = _$('customer-address');
+    if (custAddrEl) custAddrEl.value = bill.customerAddress || bill.address || '';
 
     const paySelect = _$('payment-mode-select');
     if (paySelect) paySelect.value = bill.paymentMode || bill.paymentMethod || 'Cash';

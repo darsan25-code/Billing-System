@@ -52,16 +52,118 @@ const CustomersPage = (() => {
     _toastTimer = setTimeout(() => t.classList.remove('billing-toast-visible'), ms);
   }
 
-  /* ── Fetch customers ────────────────────────────────────────── */
+  /* ── Fetch & Group Customers ───────────────────────────────── */
+  function _getCustomersRaw() {
+    const dbBills = (typeof DB !== 'undefined') ? DB.Bills.all() : [];
+    const dbCustomers = (typeof DB !== 'undefined') ? DB.Customers.all() : [];
+
+    const norm = (s) => (s || '').trim().toLowerCase();
+    const customerMap = new Map();
+    const walkinEntries = [];
+
+    dbBills.forEach(b => {
+      const name = (b.customerName || 'Walk-in Customer').trim();
+      const phone = (b.customerPhone || '').trim();
+      const addr = (b.customerAddress || b.address || '').trim();
+      const isWalkin = !name || (norm(name).includes('walk-in') && !phone);
+
+      if (isWalkin) {
+        walkinEntries.push({
+          id: b.id || b.billNo,
+          billNo: b.billNo || b.invoiceNo,
+          name: 'Walk-in Customer',
+          phone: '',
+          address: addr,
+          totalBills: 1,
+          totalAmount: b.grandTotal !== undefined ? b.grandTotal : (b.subtotal || 0),
+          lastPurchaseDate: b.date || (b.createdAt ? b.createdAt.split('T')[0] : '—'),
+          rawDate: b.createdAt || b.date || '',
+          isWalkin: true,
+          bills: [b]
+        });
+      } else {
+        const key = phone ? `phone:${phone}` : `name:${norm(name)}`;
+        if (!customerMap.has(key)) {
+          const dbCust = dbCustomers.find(c => (phone && c.phone === phone) || norm(c.name) === norm(name));
+          customerMap.set(key, {
+            id: dbCust ? dbCust.id : `CUS_${key}`,
+            name: dbCust ? dbCust.name : name,
+            phone: phone || (dbCust ? dbCust.phone : ''),
+            address: addr || (dbCust ? dbCust.address : ''),
+            notes: dbCust ? dbCust.notes : '',
+            totalBills: 0,
+            totalAmount: 0,
+            lastPurchaseDate: '',
+            rawDate: '',
+            isWalkin: false,
+            bills: []
+          });
+        }
+
+        const entry = customerMap.get(key);
+        entry.bills.push(b);
+        entry.totalBills += 1;
+        entry.totalAmount += (b.grandTotal !== undefined ? b.grandTotal : (b.subtotal || 0));
+
+        const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '');
+        const bRaw = b.createdAt || b.date || '';
+        if (!entry.rawDate || bRaw > entry.rawDate) {
+          entry.rawDate = bRaw;
+          entry.lastPurchaseDate = bDate;
+        }
+        if (addr && (!entry.address || entry.address === '—')) {
+          entry.address = addr;
+        }
+      }
+    });
+
+    dbCustomers.forEach(c => {
+      const name = (c.name || '').trim();
+      const phone = (c.phone || '').trim();
+      const isWalkin = norm(name).includes('walk-in') && !phone;
+      if (isWalkin) return;
+
+      const key = phone ? `phone:${phone}` : `name:${norm(name)}`;
+      if (!customerMap.has(key)) {
+        customerMap.set(key, {
+          id: c.id,
+          name: c.name,
+          phone: c.phone || '',
+          address: c.address || '',
+          notes: c.notes || '',
+          totalBills: c.totalBills || 0,
+          totalAmount: c.totalAmount || 0,
+          lastPurchaseDate: c.lastPurchaseDate || '—',
+          rawDate: c.createdAt || '',
+          isWalkin: false,
+          bills: (typeof DB !== 'undefined' ? DB.Customers.billsForCustomer(c.id) : [])
+        });
+      }
+    });
+
+    const allRecords = [...Array.from(customerMap.values()), ...walkinEntries];
+    allRecords.sort((a, b) => (b.rawDate || '').localeCompare(a.rawDate || ''));
+    return allRecords;
+  }
+
   function _getCustomers() {
-    const all = (typeof DB !== 'undefined') ? DB.Customers.all() : [];
-    if (!_searchQuery) return all;
-    const q = _searchQuery.toLowerCase();
-    return all.filter(c =>
-      (c.name  || '').toLowerCase().includes(q) ||
-      (c.phone || '').toLowerCase().includes(q) ||
-      (c.address || '').toLowerCase().includes(q)
-    );
+    const allRecords = _getCustomersRaw();
+    if (!_searchQuery || !_searchQuery.trim()) return allRecords;
+
+    const q = _searchQuery.toLowerCase().trim();
+    return allRecords.filter(c => {
+      const nameMatch = (c.name || '').toLowerCase().includes(q);
+      const phoneMatch = (c.phone || '').toLowerCase().includes(q);
+      const addrMatch = (c.address || '').toLowerCase().includes(q);
+      const billNoMatch = (c.billNo || '').toLowerCase().includes(q);
+      const billsMatch = c.bills && c.bills.some(b =>
+        String(b.billNo || '').toLowerCase().includes(q) ||
+        String(b.invoiceNo || '').toLowerCase().includes(q) ||
+        String(b.id || '').toLowerCase().includes(q)
+      );
+
+      return nameMatch || phoneMatch || addrMatch || billNoMatch || billsMatch;
+    });
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -71,21 +173,22 @@ const CustomersPage = (() => {
     const tbody = _$('cust-table-body');
     if (!tbody) return;
 
-    const customers = _getCustomers();
-    const total     = (typeof DB !== 'undefined') ? DB.Customers.count() : 0;
-    const allCust   = (typeof DB !== 'undefined') ? DB.Customers.all() : [];
+    const customers  = _getCustomers();
+    const allRecords = _getCustomersRaw();
 
-    const totalRev  = allCust.reduce((s, c) => s + (c.totalAmount || 0), 0);
-    const walkins   = (typeof DB !== 'undefined') ? DB.Bills.all().filter(b => (b.customerName || '').toLowerCase().includes('walk-in')).length : 0;
+    const total    = allRecords.length;
+    const totalRev = allRecords.reduce((s, c) => s + (c.totalAmount || 0), 0);
+    const registeredCount = allRecords.filter(c => !c.isWalkin).length;
+    const walkinsCount = allRecords.filter(c => c.isWalkin).length;
 
     const set = (id, v) => { const el = _$(id); if (el) el.textContent = v; };
     set('stat-total-cust', total);
     set('stat-total-rev',  fmtINR(totalRev));
-    set('stat-registered', allCust.filter(c => !c.name.toLowerCase().includes('walk-in')).length);
-    set('stat-walkins',    walkins);
+    set('stat-registered', registeredCount);
+    set('stat-walkins',    walkinsCount);
 
     const pill = _$('cust-count-pill');
-    if (pill) pill.textContent = `${total} customer${total !== 1 ? 's' : ''}`;
+    if (pill) pill.textContent = `${total} customer record${total !== 1 ? 's' : ''}`;
 
     const rsl = _$('cust-result-label');
     if (rsl) rsl.textContent = _searchQuery ? `${customers.length} of ${total} shown` : '';
@@ -97,7 +200,7 @@ const CustomersPage = (() => {
             <div class="cust-empty-state">
               <div class="cust-empty-icon">👥</div>
               <p>${_searchQuery ? `No customer matching &ldquo;${_esc(_searchQuery)}&rdquo;` : 'No customer records yet'}</p>
-              <span>${_searchQuery ? 'Try searching with a different name or phone number.' : 'Customer records are saved automatically when bills are issued, or click "+ Add Customer".'}</span>
+              <span>${_searchQuery ? 'Try searching with a customer name, phone number, address, or bill number.' : 'Customer records are saved automatically when bills are issued, or click "+ Add Customer".'}</span>
             </div>
           </td>
         </tr>`;
@@ -105,25 +208,28 @@ const CustomersPage = (() => {
     }
 
     tbody.innerHTML = customers.map(c => {
-      const isWalkin = (c.name || '').toLowerCase().includes('walk-in');
+      const isWalkin = c.isWalkin || (c.name || '').toLowerCase().includes('walk-in');
       return `
         <tr class="cust-row" data-cust-id="${_esc(c.id)}">
           <td class="col-cust-name">
             <div class="cust-name-wrap">
-              <div class="cust-name-main">${_esc(c.name)}</div>
-              ${isWalkin ? `<span class="walkin-chip">Walk-in</span>` : ''}
+              <div class="cust-name-main">
+                ${_esc(c.name)}
+                ${c.billNo ? `<span style="font-family:monospace;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:4px;font-size:0.72rem;margin-left:6px;border:1px solid #fcd34d">${_esc(c.billNo)}</span>` : ''}
+              </div>
+              ${isWalkin ? `<span class="walkin-chip">Walk-in Bill</span>` : ''}
               ${c.address ? `<div class="cust-address-sub">${_esc(c.address)}</div>` : ''}
             </div>
           </td>
           <td class="col-cust-phone">${c.phone ? `<span class="phone-chip">${_esc(c.phone)}</span>` : '<span class="td-muted">—</span>'}</td>
-          <td class="col-cust-bills td-center"><span class="bills-count-badge">${c.totalBills || 0}</span></td>
+          <td class="col-cust-bills td-center"><span class="bills-count-badge">${c.totalBills || 1}</span></td>
           <td class="col-cust-amount td-right"><span class="amount-badge">${fmtINR(c.totalAmount)}</span></td>
           <td class="col-cust-date td-center"><span class="date-chip">${c.lastPurchaseDate || '—'}</span></td>
           <td class="col-cust-actions td-center">
             <div class="td-actions-wrap">
               <button class="action-btn action-history" data-id="${_esc(c.id)}" title="View Customer Invoices">${IC.eye} Invoices</button>
-              <button class="action-btn action-edit" data-id="${_esc(c.id)}" title="Edit Customer">${IC.edit}</button>
-              <button class="action-btn action-delete" data-id="${_esc(c.id)}" title="Delete Customer">${IC.trash}</button>
+              ${!isWalkin ? `<button class="action-btn action-edit" data-id="${_esc(c.id)}" title="Edit Customer">${IC.edit}</button>` : ''}
+              <button class="action-btn action-delete" data-id="${_esc(c.id)}" title="Delete Record">${IC.trash}</button>
             </div>
           </td>
         </tr>`;
@@ -221,25 +327,31 @@ const CustomersPage = (() => {
      CUSTOMER INVOICES HISTORY MODAL
      ══════════════════════════════════════════════════════════════ */
   function _openHistoryModal(customerId) {
-    const c = DB.Customers.find(customerId);
+    const allRecords = _getCustomersRaw();
+    const c = allRecords.find(rec => rec.id === customerId) || (typeof DB !== 'undefined' ? DB.Customers.find(customerId) : null);
     if (!c) return;
 
-    const bills = DB.Customers.billsForCustomer(customerId);
+    const bills = (c.bills && c.bills.length > 0)
+      ? c.bills
+      : (typeof DB !== 'undefined' ? DB.Customers.billsForCustomer(customerId) : []);
+
+    const totalRev = bills.reduce((sum, b) => sum + (b.grandTotal !== undefined ? b.grandTotal : (b.subtotal || 0)), 0);
 
     const overlay = document.createElement('div');
     overlay.className = 'prod-modal-overlay';
 
     overlay.innerHTML = /* html */`
-      <div class="prod-modal" role="dialog" aria-modal="true" style="max-width:720px">
+      <div class="prod-modal" role="dialog" aria-modal="true" style="max-width:750px">
         <div class="prod-modal-header">
-          <h2>📄 Invoice History — ${_esc(c.name)}</h2>
+          <h2>📄 Invoice History — ${_esc(c.name)}${c.billNo ? ` (${_esc(c.billNo)})` : ''}</h2>
           <button class="modal-close-btn" id="hist-close-btn">✕</button>
         </div>
         <div class="prod-modal-body" style="padding:16px 20px">
-          <div class="cust-hist-meta">
+          <div class="cust-hist-meta" style="display:flex;gap:20px;margin-bottom:16px;background:#f8fafc;padding:12px 16px;border-radius:8px;border:1px solid #e2e8f0;font-size:0.85rem">
             <div>Phone: <strong>${_esc(c.phone || '—')}</strong></div>
-            <div>Total Bills: <strong>${c.totalBills || bills.length}</strong></div>
-            <div>Total Revenue: <strong>${fmtINR(c.totalAmount)}</strong></div>
+            ${c.address ? `<div>Address: <strong>${_esc(c.address)}</strong></div>` : ''}
+            <div>Total Bills: <strong>${bills.length}</strong></div>
+            <div>Total Revenue: <strong>${fmtINR(totalRev || c.totalAmount)}</strong></div>
           </div>
 
           ${bills.length === 0 ? `
@@ -247,30 +359,37 @@ const CustomersPage = (() => {
               <p>No billing history recorded for this customer yet.</p>
             </div>
           ` : `
-            <table class="cust-bills-tbl">
+            <table class="cust-bills-tbl" style="width:100%;border-collapse:collapse">
               <thead>
-                <tr>
-                  <th>Bill No.</th>
-                  <th>Date</th>
-                  <th class="txt-center">Items</th>
-                  <th class="txt-right">Amount</th>
-                  <th class="txt-center">Action</th>
+                <tr style="background:#0f172a;color:#fff;font-size:0.75rem">
+                  <th style="padding:10px 14px;text-align:left">Bill No.</th>
+                  <th style="padding:10px 14px;text-align:left">Date</th>
+                  <th style="padding:10px 14px;text-align:center">Items</th>
+                  <th style="padding:10px 14px;text-align:right">Amount</th>
+                  <th style="padding:10px 14px;text-align:center">Action</th>
                 </tr>
               </thead>
               <tbody>
-                ${bills.map(b => `
-                  <tr>
-                    <td><strong style="font-family:monospace">${_esc(b.billNo)}</strong></td>
-                    <td>${_esc(b.date || b.createdAt?.split('T')[0])}</td>
-                    <td class="txt-center">${b.itemCount || '—'}</td>
-                    <td class="txt-right font-bold">${fmtINR(b.grandTotal)}</td>
-                    <td class="txt-center">
-                      <button class="inv-view-btn" data-bill-no="${_esc(b.billNo)}">
-                        ${IC.eye} View / Print
-                      </button>
-                    </td>
-                  </tr>
-                `).join('')}
+                ${bills.map(b => {
+                  const bNo = b.billNo || b.invoiceNo || b.id;
+                  const bDate = b.date || (b.createdAt ? b.createdAt.split('T')[0] : '—');
+                  const itemsCount = b.itemCount || (b.items ? b.items.length : '—');
+                  const bAmount = b.grandTotal !== undefined ? b.grandTotal : (b.subtotal || 0);
+
+                  return `
+                    <tr style="border-bottom:1px solid #e2e8f0">
+                      <td style="padding:10px 14px"><strong style="font-family:monospace;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:4px;border:1px solid #fcd34d">${_esc(bNo)}</strong></td>
+                      <td style="padding:10px 14px;font-size:0.82rem;color:#475569">${_esc(bDate)}</td>
+                      <td style="padding:10px 14px;text-align:center;font-weight:700">${itemsCount} item${itemsCount !== 1 ? 's' : ''}</td>
+                      <td style="padding:10px 14px;text-align:right;font-weight:800;color:#0f172a">${fmtINR(bAmount)}</td>
+                      <td style="padding:10px 14px;text-align:center">
+                        <button class="inv-view-btn" data-bill-no="${_esc(bNo)}" style="background:#0f172a;color:#f59e0b;border:none;padding:5px 12px;border-radius:6px;font-size:0.75rem;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:4px">
+                          ${IC.eye} View / Print
+                        </button>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
               </tbody>
             </table>
           `}
@@ -298,9 +417,12 @@ const CustomersPage = (() => {
 
   function _handleDelete(id, btn) {
     if (btn.dataset.confirming === '1') {
-      const c = DB.Customers.find(id);
-      DB.Customers.remove(id);
-      _showToast(`🗑 Customer "${c?.name || ''}" deleted`, 'info');
+      const allRecords = _getCustomersRaw();
+      const rec = allRecords.find(r => r.id === id);
+      if (typeof DB !== 'undefined') {
+        DB.Customers.remove(id);
+      }
+      _showToast(`🗑 Record "${rec?.name || ''}" removed`, 'info');
       _renderTable();
     } else {
       btn.dataset.confirming = '1';

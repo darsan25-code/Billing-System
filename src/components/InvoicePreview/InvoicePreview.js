@@ -124,8 +124,9 @@ const InvoicePreview = (() => {
           <div class="inv-meta-grid">
             <div class="inv-meta-block">
               <span class="inv-meta-label">Billed To (Customer Details):</span>
-              <div class="inv-cust-name">${_esc(bill.customerName || 'Walk-in Customer')}</div>
+              <div class="inv-cust-name">${_esc((bill.customerName || 'Walk-in Customer').toUpperCase())}</div>
               ${bill.customerPhone ? `<div class="inv-cust-phone">Phone: ${_esc(bill.customerPhone)}</div>` : ''}
+              ${(bill.customerAddress || bill.address) ? `<div class="inv-cust-address" style="font-size:0.82rem;color:#475569;margin-top:2px;word-break:break-word;overflow-wrap:break-word">Address: ${_esc(bill.customerAddress || bill.address)}</div>` : ''}
             </div>
             <div class="inv-meta-block inv-meta-right">
               <table class="inv-meta-tbl">

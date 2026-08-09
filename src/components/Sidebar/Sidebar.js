@@ -41,6 +41,17 @@ const Sidebar = (() => {
     });
 
     container.appendChild(nav);
+
+    function updateActiveLink() {
+      const current = (window.location.hash.replace('#', '') || 'dashboard');
+      nav.querySelectorAll('a').forEach(link => {
+        const isAct = (link.dataset.page === current);
+        link.classList.toggle('active', isAct);
+      });
+    }
+
+    window.addEventListener('hashchange', updateActiveLink);
+    updateActiveLink();
   }
 
   return { mount };

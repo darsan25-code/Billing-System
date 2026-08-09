@@ -23,17 +23,61 @@
 
 /* ---------- Sidebar ---------- */
 .sidebar {
-  width: 240px;
-  min-width: 240px;
+  width: 250px;
+  min-width: 250px;
   height: 100vh;
-  background: #0f172a;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
   color: #fff;
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.18);
+  z-index: 10;
 }
 
-/* ---------- Right-hand wrapper ---------- */
+.sidebar > div:first-child {
+  padding: 24px 20px 20px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.sidebar nav {
+  padding: 16px 8px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sidebar a {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 12px 16px !important;
+  color: rgba(255, 255, 255, 0.65) !important;
+  text-decoration: none !important;
+  font-size: 0.9rem !important;
+  font-weight: 500 !important;
+  border-radius: 10px !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative;
+}
+
+.sidebar a:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #ffffff !important;
+  transform: translateX(4px);
+}
+
+.sidebar a.active {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.3) 0%, rgba(30, 64, 175, 0.4) 100%) !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border: 1px solid rgba(59, 130, 246, 0.35) !important;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.2);
+}
+
+/* Right-hand wrapper */
 .content-wrapper {
   flex: 1;
   display: flex;
@@ -45,11 +89,19 @@
 .navbar {
   height: 56px;
   min-height: 56px;
-  background: #fff;
+  background: #ffffff;
   border-bottom: 1px solid #e2e8f0;
   display: flex;
   align-items: center;
-  padding: 0 24px;
+  padding: 0 28px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.03);
+}
+
+#navbar-page-title {
+  font-size: 1.08rem !important;
+  font-weight: 700 !important;
+  color: #0f172a !important;
+  letter-spacing: -0.01em;
 }
 
 /* ---------- Page content ---------- */
@@ -274,6 +326,7 @@
   border-collapse: collapse;
   margin-bottom: 20px;
   font-size: 0.82rem;
+  table-layout: auto;
 }
 
 .inv-items-table th {
@@ -290,6 +343,8 @@
   padding: 8px 10px;
   border: 1px solid #cbd5e1;
   color: #1e293b;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .txt-center { text-align: center; }
@@ -300,6 +355,13 @@
 .inv-item-name {
   font-weight: 600;
   color: #0f172a;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.inv-cust-address {
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 /* Summary Box */
@@ -392,24 +454,42 @@
 }
 
 /* ============================================================
-   @media print Rules
+   @media print Rules (A4 Printable Invoice Layout)
    ============================================================ */
 @media print {
-  /* Hide non-printable UI elements */
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    width: 100% !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Hide non-printable UI elements completely */
   body * {
     visibility: hidden;
   }
+
   .print-hide,
+  .invoice-toolbar,
   .sidebar,
   .navbar,
   .billing-header-bar,
   .billing-left,
   .billing-right,
-  .app-shell {
+  .app-shell,
+  #dash-toast,
+  #billing-toast,
+  button {
     display: none !important;
   }
 
-  /* Show document only */
+  /* Show invoice document only */
   #invoice-modal-overlay,
   #printable-invoice,
   #invoice-preview,
@@ -419,28 +499,60 @@
   }
 
   #invoice-modal-overlay {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: auto;
-    background: #fff !important;
+    position: static !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    background: transparent !important;
     padding: 0 !important;
     margin: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
   }
 
   .invoice-modal-container {
     box-shadow: none !important;
     max-width: 100% !important;
+    width: 100% !important;
     border-radius: 0 !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
   }
 
   .invoice-document {
-    padding: 15mm 15mm !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    font-size: 10pt !important;
   }
 
-  @page {
-    size: A4 portrait;
-    margin: 10mm;
+  /* Multi-page table pagination & row protection */
+  .inv-items-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  .inv-items-table thead {
+    display: table-header-group !important;
+  }
+
+  .inv-items-table tbody {
+    display: table-row-group !important;
+  }
+
+  .inv-items-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .inv-summary-wrap,
+  .inv-footer-sig {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }

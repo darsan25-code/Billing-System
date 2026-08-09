@@ -33,12 +33,15 @@ function showToast(msg, type = 'info', ms = 3000) {
 }
 
 function printInvoice() {
-    const invoiceContainer = document.getElementById("invoice-modal-overlay") || document.getElementById("invoice-preview") || document.getElementById("printable-invoice");
+    const targetEl = document.getElementById("invoice-preview") || document.getElementById("printable-invoice") || document.getElementById("invoice-modal-overlay");
 
-    if (!invoiceContainer) {
+    if (!targetEl) {
         showToast("Invoice not found", "error");
         return;
     }
+
+    const clonedNode = targetEl.cloneNode(true);
+    clonedNode.querySelectorAll('.print-hide, .invoice-toolbar, button').forEach(el => el.remove());
 
     const styles = Array.from(
       document.querySelectorAll(
@@ -46,35 +49,75 @@ function printInvoice() {
       )
     )
     .map(el => el.outerHTML)
-    .join('');
+    .join('\n');
 
     const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+        window.print();
+        return;
+    }
 
-    printWindow.document.write(`
+    printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
+<meta charset="UTF-8">
+<title>Print Invoice - Sree Vel Murugan Hardware &amp; Tiles</title>
 ${styles}
-
 <style>
-body{
-    margin:0;
-    padding:20px;
-    background:white;
+@page {
+    size: A4 portrait;
+    margin: 10mm 12mm;
 }
-
-.no-print, .invoice-toolbar, .print-hide {
-    display:none !important;
+html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #0f172a !important;
+}
+.no-print, .invoice-toolbar, .print-hide, button {
+    display: none !important;
+}
+.invoice-modal-overlay, .invoice-modal-container {
+    position: static !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+.invoice-document {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+}
+.inv-items-table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+}
+.inv-items-table thead {
+    display: table-header-group !important;
+}
+.inv-items-table tr {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+}
+.inv-summary-wrap, .inv-footer-sig {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+}
+.inv-cust-address, .inv-item-name {
+    word-break: break-word !important;
+    overflow-wrap: break-word !important;
 }
 </style>
-
 </head>
-
 <body>
-${invoiceContainer.outerHTML}
+${clonedNode.outerHTML}
 </body>
-
-</html>
-`);
+</html>`);
 
     printWindow.document.close();
 
@@ -82,7 +125,7 @@ ${invoiceContainer.outerHTML}
         printWindow.focus();
         printWindow.print();
         printWindow.close();
-    }, 700);
+    }, 450);
 }
 
 function deleteBill(id) {

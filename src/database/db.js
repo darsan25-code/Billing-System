@@ -233,7 +233,7 @@ const DB = (() => {
      * Look up an existing customer (by phone, then by name) or create one.
      * Returns the customer record.
      */
-    upsert(name, phone) {
+    upsert(name, phone, address = '') {
       const all  = T.get('customers');
       const norm = (s) => (s || '').trim().toLowerCase();
 
@@ -250,12 +250,16 @@ const DB = (() => {
           id:               _id('CUS'),
           name:             (name || 'Walk-in Customer').trim(),
           phone:            (phone || '').trim(),
-          address:          '',
+          address:          (address || '').trim(),
           totalBills:       0,
           totalAmount:      0,
           lastPurchaseDate: _today(),
         });
         all.push(customer);
+        T.set('customers', all);
+      } else if (address && address.trim() && !customer.address) {
+        customer.address = address.trim();
+        customer.updatedAt = _now();
         T.set('customers', all);
       }
 
@@ -308,10 +312,33 @@ const DB = (() => {
       T.set('customers', all);
     },
 
-    billsForCustomer(id) {
-      return Bills.all()
-        .filter(b => b.customerId === id)
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    billsForCustomer(idOrCustomer) {
+      const allBills = Bills.all();
+      if (!idOrCustomer) return [];
+
+      let cust = null;
+      if (typeof idOrCustomer === 'object' && idOrCustomer !== null) {
+        cust = idOrCustomer;
+      } else {
+        cust = Customers.find(idOrCustomer);
+      }
+
+      if (cust) {
+        const normName = (cust.name || '').trim().toLowerCase();
+        const normPhone = (cust.phone || '').trim();
+        const isWalkin = normName.includes('walk-in');
+
+        return allBills.filter(b => {
+          if (b.customerId === cust.id) return true;
+          if (cust.billNo && (b.billNo === cust.billNo || b.id === cust.billNo)) return true;
+          if (!isWalkin && normPhone && (b.customerPhone || '').trim() === normPhone) return true;
+          if (!isWalkin && normName && (b.customerName || '').trim().toLowerCase() === normName) return true;
+          return false;
+        }).sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
+      }
+
+      return allBills.filter(b => b.customerId === idOrCustomer || b.billNo === idOrCustomer || b.id === idOrCustomer)
+        .sort((a, b) => (b.createdAt || b.date || '').localeCompare(a.createdAt || a.date || ''));
     },
 
     count: () => T.get('customers').length,
@@ -394,16 +421,97 @@ const DB = (() => {
      ══════════════════════════════════════════════════════════════ */
 
   /**
-   * Reserve the next bill number and persist the counter.
-   * Format: SVMH-YYYYMM-NNNN   e.g. SVMH-202608-0001
+   * Historical duplicate repair helper.
+   * Scans all stored bills (active and deleted). If any duplicate invoice number exists,
+   * reassigns a new unique sequence to duplicate historical records preserving all data.
+   */
+  function _repairHistoricalDuplicateInvoiceNumbers() {
+    const bills = T.get('bills');
+    if (!bills || !Array.isArray(bills) || bills.length === 0) return;
+
+    const seen = new Set();
+    let modified = false;
+
+    bills.forEach((bill) => {
+      const currentNo = String(bill.invoiceNo || bill.billNo || '').trim();
+
+      if (!currentNo || seen.has(currentNo)) {
+        const d = new Date();
+        const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+        let prefix = `SVMH-${ym}-`;
+        if (currentNo && currentNo.startsWith('SVMH-')) {
+          const parts = currentNo.split('-');
+          if (parts.length >= 3) {
+            prefix = `${parts[0]}-${parts[1]}-`;
+          }
+        }
+
+        let seq = 1;
+        let newNo = `${prefix}${String(seq).padStart(4, '0')}`;
+        const allNos = new Set([...seen, ...bills.map(b => String(b.invoiceNo || b.billNo || ''))]);
+
+        while (allNos.has(newNo)) {
+          seq++;
+          newNo = `${prefix}${String(seq).padStart(4, '0')}`;
+        }
+
+        console.warn(`[DB] Repaired duplicate invoice number: "${currentNo}" -> "${newNo}" (Bill ID: ${bill.id})`);
+        bill.billNo = newNo;
+        bill.invoiceNo = newNo;
+        seen.add(newNo);
+        modified = true;
+      } else {
+        bill.billNo = currentNo;
+        bill.invoiceNo = currentNo;
+        seen.add(currentNo);
+      }
+    });
+
+    if (modified) {
+      T.set('bills', bills);
+      try {
+        localStorage.setItem('bills', JSON.stringify(bills));
+        localStorage.setItem('svmh_bills', JSON.stringify(bills));
+      } catch (e) {}
+    }
+  }
+
+  /**
+   * Reserve the next available unique bill number.
+   * Format: SVMH-YYYYMM-NNNN   e.g. SVMH-202608-0108
+   * Checks ALL active and deleted/trash bills to guarantee no duplication.
    */
   function nextBillNo() {
-    const m       = Meta.get();
-    const counter = (m.billCounter || 0) + 1;
-    const d       = new Date();
-    const ym      = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
-    Meta.patch({ billCounter: counter });
-    return `SVMH-${ym}-${String(counter).padStart(4, '0')}`;
+    _repairHistoricalDuplicateInvoiceNumbers();
+    const bills = T.get('bills') || [];
+    const d     = new Date();
+    const ym    = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const prefix = `SVMH-${ym}-`;
+
+    let maxSeq = 0;
+    bills.forEach(b => {
+      const no = String(b.billNo || b.invoiceNo || '');
+      if (no.startsWith(prefix)) {
+        const seq = parseInt(no.replace(prefix, ''), 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      } else if (no.startsWith('SVMH-')) {
+        const parts = no.split('-');
+        const seq = parseInt(parts[parts.length - 1], 10);
+        if (!isNaN(seq) && seq > maxSeq) maxSeq = seq;
+      }
+    });
+
+    let nextSeq = maxSeq + 1;
+    let candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+
+    const existingNos = new Set(bills.map(b => String(b.billNo || b.invoiceNo || '')));
+    while (existingNos.has(candidate)) {
+      nextSeq++;
+      candidate = `${prefix}${String(nextSeq).padStart(4, '0')}`;
+    }
+
+    Meta.patch({ billCounter: Math.max((Meta.get().billCounter || 0), nextSeq) });
+    return candidate;
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -412,20 +520,8 @@ const DB = (() => {
 
   /**
    * Validate, persist a complete bill, reduce product stock.
-   *
-   * @param {object} params
-   *   customerName  {string}
-   *   customerPhone {string}
-   *   billType      {'gst'|'normal'}
-   *   billNo        {string}   – pre-assigned sequential number
-   *   items         {Array}    – [{productId, productName, hsn, unit, qty, rate,
-   *                               discPct, gstPct, baseAmount, discountAmount,
-   *                               taxableAmount, gstAmount, rowTotal}]
-   *   totals        {object}   – output of BillingCalculator.calcBillTotals()
-   *
-   * @returns {{ success, bill?, items?, customer?, errors?, fieldErrors? }}
    */
-  function saveBill({ customerName, customerPhone, billType, paymentMode, billNo, items, totals }) {
+  function saveBill({ customerName, customerPhone, customerAddress, billType, paymentMode, billNo, items, totals }) {
 
     /* ── 1. Validation ── */
     const errors      = [];
@@ -433,11 +529,7 @@ const DB = (() => {
 
     const nameTrimmed  = (customerName  || '').trim();
     const phoneTrimmed = (customerPhone || '').replace(/\D/g, '');
-
-    // Bill number is mandatory
-    if (!billNo || !billNo.trim()) {
-      errors.push('Bill number is missing. Please reload the billing page.');
-    }
+    const addressTrimmed = (customerAddress || '').trim();
 
     // At least one item is required
     if (!items || items.length === 0) {
@@ -453,23 +545,34 @@ const DB = (() => {
       });
     }
 
-    // Customer name and phone number are OPTIONAL. No strict validation.
-
     if (errors.length > 0) return { success: false, errors, fieldErrors };
 
-    /* ── 2. Find or create customer (walk-in when name is blank) ── */
-    const effectiveName = nameTrimmed || 'Walk-in Customer';
-    const customer = Customers.upsert(effectiveName, (customerPhone || '').trim());
+    /* ── 2. Ensure Bill Number is non-empty and unique ── */
+    _repairHistoricalDuplicateInvoiceNumbers();
+    const allBills = T.get('bills') || [];
+    let finalBillNo = billNo ? billNo.trim() : '';
 
-    /* ── 3. Insert bill ── */
+    if (!finalBillNo || allBills.some(b => b.billNo === finalBillNo || b.invoiceNo === finalBillNo)) {
+      finalBillNo = nextBillNo();
+    }
+
+    /* ── 3. Find or create customer (walk-in when name is blank) ── */
+    const effectiveName = nameTrimmed || 'Walk-in Customer';
+    const customer = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
+
+    /* ── 4. Insert bill ── */
     const bill = Bills.insert({
-      billNo,
-      customerId:    customer.id,
-      customerName:  customer.name,
-      customerPhone: customer.phone,
+      billNo:          finalBillNo,
+      invoiceNo:       finalBillNo,
+      customerId:      customer.id,
+      customerName:    customer.name,
+      customerPhone:   customer.phone,
+      customerAddress: addressTrimmed,
+      address:         addressTrimmed,
       billType,
-      paymentMode:   paymentMode || 'Cash',
-      itemCount:     items.length,
+      paymentMode:     paymentMode || 'Cash',
+      paymentMethod:   paymentMode || 'Cash',
+      itemCount:       items.length,
       subtotal:          totals.subtotal          || 0,
       totalItemDiscount: totals.totalItemDiscount || 0,
       totalTaxable:      totals.totalTaxable      || 0,
@@ -479,7 +582,7 @@ const DB = (() => {
       grandTotal:        totals.grandTotal        || 0,
     });
 
-    /* ── 4. Insert bill items + reduce stock ── */
+    /* ── 5. Insert bill items + reduce stock ── */
     const savedItems = BillItems.insertMany(bill.id, items.map(item => ({
       productId:      item.productId   || null,
       productName:    item.productName || '',
@@ -497,13 +600,13 @@ const DB = (() => {
     })));
 
     items.forEach(item => {
-      if (item.productId) Products.adjustStock(item.productId, item.qty, billNo);
+      if (item.productId) Products.adjustStock(item.productId, item.qty, finalBillNo);
     });
 
-    /* ── 5. Update customer aggregates ── */
+    /* ── 6. Update customer aggregates ── */
     Customers.addBillTotals(customer.id, totals.grandTotal || 0);
 
-    /* ── 6. Sync to DiskStorage (D:/BillingSystem/data/ structured files) ── */
+    /* ── 7. Sync to DiskStorage ── */
     if (typeof DiskStorage !== 'undefined') {
       DiskStorage.writeBillFile(bill, savedItems);
       DiskStorage.writeProductsFile(Products.all());
@@ -516,7 +619,7 @@ const DB = (() => {
   /* ══════════════════════════════════════════════════════════════
      UPDATE EXISTING BILL
      ══════════════════════════════════════════════════════════════ */
-  function updateBill({ billId, customerName, customerPhone, billType, paymentMode, billNo, items, totals }) {
+  function updateBill({ billId, customerName, customerPhone, customerAddress, billType, paymentMode, billNo, items, totals }) {
     let bills = T.get('bills');
     if (!bills || bills.length === 0) {
       try {
@@ -530,9 +633,10 @@ const DB = (() => {
     const targetBill = bills[index];
     const targetInvoiceNo = targetBill.invoiceNo || targetBill.billNo || billNo || billId;
 
-    const nameTrimmed   = (customerName  || '').trim();
-    const effectiveName = nameTrimmed || 'Walk-in Customer';
-    const customer      = Customers.upsert(effectiveName, (customerPhone || '').trim());
+    const nameTrimmed    = (customerName  || '').trim();
+    const addressTrimmed = (customerAddress || '').trim();
+    const effectiveName  = nameTrimmed || 'Walk-in Customer';
+    const customer       = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
 
     // Restore old stock for previous items of this bill before applying new items
     const oldItems = BillItems.forBill(targetBill.id);
@@ -581,6 +685,8 @@ const DB = (() => {
       customerId:        customer.id,
       customerName:      customer.name,
       customerPhone:     customer.phone,
+      customerAddress:   addressTrimmed,
+      address:           addressTrimmed,
       billType,
       paymentMode:       paymentMode || 'Cash',
       paymentMethod:     paymentMode || 'Cash',
@@ -794,6 +900,7 @@ const DB = (() => {
      ══════════════════════════════════════════════════════════════ */
 
   function init() {
+    _repairHistoricalDuplicateInvoiceNumbers();
     const m = Meta.get();
     if (m.initialized) {
       console.log(`[DB] Ready — ${Products.count()} products, ${Bills.count()} bills`);

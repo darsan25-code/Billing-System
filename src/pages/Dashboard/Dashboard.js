@@ -275,12 +275,17 @@ const DashboardPage = (() => {
     if (_searchQuery && _searchQuery.trim()) {
       const q = _searchQuery.toLowerCase().trim();
       result = result.filter(b => {
-        const no   = (b.billNo || '').toLowerCase();
-        const cust = (b.customerName || '').toLowerCase();
-        const phone= (b.customerPhone || '').toLowerCase();
-        const mode = (b.paymentMode || 'cash').toLowerCase();
-        const date = (b.date || b.createdAt || '').toLowerCase();
-        return no.includes(q) || cust.includes(q) || phone.includes(q) || mode.includes(q) || date.includes(q);
+        const no   = String(b.billNo || '').toLowerCase();
+        const inv  = String(b.invoiceNo || '').toLowerCase();
+        const id   = String(b.id || '').toLowerCase();
+        const cust = String(b.customerName || '').toLowerCase();
+        const phone= String(b.customerPhone || '').toLowerCase();
+        const mode = String(b.paymentMode || b.paymentMethod || 'cash').toLowerCase();
+        const date = String(b.date || b.createdAt || '').toLowerCase();
+        const addr = String(b.customerAddress || b.address || '').toLowerCase();
+        const itemsStr = (b.items || []).map(i => (i.productName || i.name || '')).join(' ').toLowerCase();
+
+        return no.includes(q) || inv.includes(q) || id.includes(q) || cust.includes(q) || phone.includes(q) || mode.includes(q) || date.includes(q) || addr.includes(q) || itemsStr.includes(q);
       });
     }
 
@@ -547,7 +552,15 @@ const DashboardPage = (() => {
     if (searchInp) {
       searchInp.addEventListener('input', (e) => {
         _searchQuery = e.target.value;
+        const cursorPosition = e.target.selectionStart;
         render(container);
+        const newSearchInp = document.getElementById('dash-bill-search');
+        if (newSearchInp) {
+          newSearchInp.focus();
+          try {
+            newSearchInp.setSelectionRange(cursorPosition, cursorPosition);
+          } catch (err) {}
+        }
       });
     }
 
