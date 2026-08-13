@@ -69,6 +69,8 @@ const InvoicePreview = (() => {
 
     const isGst = bill.billType !== 'normal';
     const words = _numToWords(bill.grandTotal);
+    const setObj = (typeof DB !== 'undefined') ? DB.Settings.get() : {};
+    const logoUrl = setObj.logoUrl || '';
 
     const overlay = document.createElement('div');
     overlay.id = 'invoice-modal-overlay';
@@ -105,7 +107,7 @@ const InvoicePreview = (() => {
           <!-- Shop Header -->
           <div class="inv-header">
             <div class="inv-shop-brand">
-              <div class="inv-logo-box">SVMH</div>
+              ${logoUrl ? `<div class="inv-logo-box has-img"><img src="${_esc(logoUrl)}" alt="Logo" /></div>` : `<div class="inv-logo-box">SVMH</div>`}
               <div class="inv-shop-title">
                 <h1>SREE VEL MURUGAN HARDWARE &amp; TILES</h1>
                 <p>Wholesale &amp; Retail Dealers in Cement, Tiles, Bricks, Plumbing &amp; Hardware</p>
@@ -141,17 +143,17 @@ const InvoicePreview = (() => {
           <table class="inv-items-table">
             <thead>
               <tr>
-                <th style="width:35px">#</th>
-                <th>Item Description</th>
-                <th style="width:65px">HSN</th>
-                <th style="width:50px" class="txt-center">Qty</th>
-                <th style="width:55px">Unit</th>
-                <th style="width:75px" class="txt-right">Rate (₹)</th>
-                <th style="width:55px" class="txt-right">Disc %</th>
-                ${isGst ? `<th style="width:75px" class="txt-right">Taxable (₹)</th>` : ''}
-                ${isGst ? `<th style="width:50px" class="txt-center">GST</th>` : ''}
-                ${isGst ? `<th style="width:75px" class="txt-right">GST (₹)</th>` : ''}
-                <th style="width:85px" class="txt-right">Total (₹)</th>
+                <th style="width:32px" class="txt-center">#</th>
+                <th class="inv-col-desc">Item Description</th>
+                <th style="min-width:60px" class="txt-mono">HSN</th>
+                <th style="min-width:45px" class="txt-center">Qty</th>
+                <th style="min-width:45px">Unit</th>
+                <th style="min-width:85px" class="txt-right inv-num-cell">Rate (₹)</th>
+                <th style="min-width:55px" class="txt-right inv-num-cell">Disc %</th>
+                ${isGst ? `<th style="min-width:90px" class="txt-right inv-num-cell">Taxable (₹)</th>` : ''}
+                ${isGst ? `<th style="min-width:50px" class="txt-center inv-num-cell">GST</th>` : ''}
+                ${isGst ? `<th style="min-width:80px" class="txt-right inv-num-cell">GST (₹)</th>` : ''}
+                <th style="min-width:95px" class="txt-right inv-num-cell">Total (₹)</th>
               </tr>
             </thead>
             <tbody>
@@ -168,19 +170,19 @@ const InvoicePreview = (() => {
                 const gstAmt = it.gstAmount ?? 0;
                 return `
                 <tr>
-                  <td class="txt-center">${idx + 1}</td>
-                  <td>
+                  <td class="txt-center inv-num-cell">${idx + 1}</td>
+                  <td class="inv-col-desc">
                     <div class="inv-item-name">${_esc(name)}</div>
                   </td>
-                  <td class="txt-mono">${_esc(hsn)}</td>
-                  <td class="txt-center font-bold">${qty}</td>
-                  <td>${_esc(unit)}</td>
-                  <td class="txt-right">${(typeof rate === 'number') ? rate.toLocaleString('en-IN', {minimumFractionDigits: 2}) : rate}</td>
-                  <td class="txt-right">${disc ? disc + '%' : '—'}</td>
-                  ${isGst ? `<td class="txt-right">${(typeof taxable === 'number') ? taxable.toLocaleString('en-IN', {minimumFractionDigits: 2}) : taxable}</td>` : ''}
-                  ${isGst ? `<td class="txt-center">${gstPct}%</td>` : ''}
-                  ${isGst ? `<td class="txt-right">${(typeof gstAmt === 'number') ? gstAmt.toLocaleString('en-IN', {minimumFractionDigits: 2}) : gstAmt}</td>` : ''}
-                  <td class="txt-right font-bold">${(typeof total === 'number') ? total.toLocaleString('en-IN', {minimumFractionDigits: 2}) : total}</td>
+                  <td class="txt-mono inv-num-cell">${_esc(hsn)}</td>
+                  <td class="txt-center font-bold inv-num-cell">${qty}</td>
+                  <td class="inv-num-cell">${_esc(unit)}</td>
+                  <td class="txt-right inv-num-cell">${(typeof rate === 'number') ? rate.toLocaleString('en-IN', {minimumFractionDigits: 2}) : rate}</td>
+                  <td class="txt-right inv-num-cell">${disc ? disc + '%' : '—'}</td>
+                  ${isGst ? `<td class="txt-right inv-num-cell">${(typeof taxable === 'number') ? taxable.toLocaleString('en-IN', {minimumFractionDigits: 2}) : taxable}</td>` : ''}
+                  ${isGst ? `<td class="txt-center inv-num-cell">${gstPct}%</td>` : ''}
+                  ${isGst ? `<td class="txt-right inv-num-cell">${(typeof gstAmt === 'number') ? gstAmt.toLocaleString('en-IN', {minimumFractionDigits: 2}) : gstAmt}</td>` : ''}
+                  <td class="txt-right font-bold inv-num-cell">${(typeof total === 'number') ? total.toLocaleString('en-IN', {minimumFractionDigits: 2}) : total}</td>
                 </tr>
               `;}).join('')}
             </tbody>
@@ -199,35 +201,35 @@ const InvoicePreview = (() => {
             <div class="inv-totals-box">
               <table class="inv-totals-tbl">
                 <tr>
-                  <td>Subtotal:</td>
-                  <td class="txt-right">${fmtINR(bill.subtotal)}</td>
+                  <td class="inv-label-cell">Subtotal:</td>
+                  <td class="txt-right inv-num-cell">${fmtINR(bill.subtotal)}</td>
                 </tr>
                 ${isGst ? `
                 <tr>
-                  <td>CGST (Output):</td>
-                  <td class="txt-right">${fmtINR((bill.totalGst || 0) / 2)}</td>
+                  <td class="inv-label-cell">CGST (Output):</td>
+                  <td class="txt-right inv-num-cell">${fmtINR((bill.totalGst || 0) / 2)}</td>
                 </tr>
                 <tr>
-                  <td>SGST (Output):</td>
-                  <td class="txt-right">${fmtINR((bill.totalGst || 0) / 2)}</td>
+                  <td class="inv-label-cell">SGST (Output):</td>
+                  <td class="txt-right inv-num-cell">${fmtINR((bill.totalGst || 0) / 2)}</td>
                 </tr>
                 <tr class="highlight-row">
-                  <td>Total GST Amount:</td>
-                  <td class="txt-right">${fmtINR(bill.totalGst)}</td>
+                  <td class="inv-label-cell">Total GST Amount:</td>
+                  <td class="txt-right inv-num-cell">${fmtINR(bill.totalGst)}</td>
                 </tr>` : ''}
                 ${bill.billDiscount > 0 ? `
                 <tr>
-                  <td>Discount:</td>
-                  <td class="txt-right">- ${fmtINR(bill.billDiscount)}</td>
+                  <td class="inv-label-cell">Discount:</td>
+                  <td class="txt-right inv-num-cell">- ${fmtINR(bill.billDiscount)}</td>
                 </tr>` : ''}
                 ${bill.roundOff !== 0 ? `
                 <tr>
-                  <td>Round Off:</td>
-                  <td class="txt-right">${bill.roundOff > 0 ? '+' : ''}${fmtINR(bill.roundOff)}</td>
+                  <td class="inv-label-cell">Round Off:</td>
+                  <td class="txt-right inv-num-cell">${bill.roundOff > 0 ? '+' : ''}${fmtINR(bill.roundOff)}</td>
                 </tr>` : ''}
                 <tr class="grand-total-row">
-                  <td>Grand Total:</td>
-                  <td class="txt-right">${fmtINR(bill.grandTotal)}</td>
+                  <td class="inv-label-cell">Grand Total:</td>
+                  <td class="txt-right inv-num-cell">${fmtINR(bill.grandTotal)}</td>
                 </tr>
               </table>
             </div>

@@ -14,7 +14,7 @@ const DashboardPage = (() => {
 
   /* ── State ───────────────────────────────────────────────────── */
   let _searchQuery = '';
-  let _dateFilter  = 'all'; // 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom'
+  let _dateFilter  = 'today'; // 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'custom'
   let _customStart = '';
   let _customEnd   = '';
   let _viewTab     = 'active'; // 'active' | 'trash'
@@ -495,19 +495,21 @@ const DashboardPage = (() => {
     }).join('');
 
     return `
-      <table class="bills-table">
-        <thead>
-          <tr>
-            <th>Bill number</th>
-            <th>Customer</th>
-            <th class="th-center">Date</th>
-            <th class="th-center">Payment mode</th>
-            <th class="th-right">Amount</th>
-            <th class="th-center">Actions</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>`;
+      <div class="bills-table-wrap" style="overflow-x:auto;width:100%">
+        <table class="bills-table">
+          <thead>
+            <tr>
+              <th>Bill number</th>
+              <th>Customer</th>
+              <th class="th-center">Date</th>
+              <th class="th-center">Payment mode</th>
+              <th class="th-right">Amount</th>
+              <th class="th-center">Actions</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   }
 
   /* ── Event Re-Registration Engine ────────────────────────────── */

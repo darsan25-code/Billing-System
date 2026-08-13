@@ -371,3 +371,44 @@
   line-height: 1.5;
   max-width: 520px;
 }
+
+/* ---------- Responsive Layout Adjustments ---------- */
+@media (max-width: 1100px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+  .shortcuts-groups {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .settings-body {
+    padding: 16px 16px 32px;
+  }
+  .settings-header {
+    padding: 12px 16px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .settings-field-grid {
+    grid-template-columns: 1fr;
+  }
+  .shortcuts-groups {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-card-bd {
+    padding: 14px;
+  }
+  .shortcut-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .shortcut-desc {
+    text-align: left;
+  }
+}

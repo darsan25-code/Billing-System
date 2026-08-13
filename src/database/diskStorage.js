@@ -44,10 +44,30 @@ const DiskStorage = (() => {
           return { success: true, path: _storagePath, handle: _dirHandle };
         }
       } catch (err) {
-        if (err.name !== 'AbortError') console.warn('[DiskStorage] Directory picker error:', err);
+        if (err.name !== 'AbortError') {
+          console.warn('[DiskStorage] Directory picker error:', err);
+          return { success: false, error: err.message || 'Permission denied' };
+        }
+        return { success: false, error: 'Folder selection cancelled' };
       }
     }
-    return { success: false, path: _storagePath };
+    return { success: false, path: _storagePath, error: 'Directory picker not supported in this browser' };
+  }
+
+  async function writeBackupToFolder(fileName, jsonString) {
+    if (_dirHandle) {
+      try {
+        const fileHandle = await _dirHandle.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(jsonString);
+        await writable.close();
+        return { success: true, path: `${_storagePath}${fileName}` };
+      } catch (err) {
+        console.warn('[DiskStorage] Could not write backup to selected folder handle:', err);
+        return { success: false, error: err.message };
+      }
+    }
+    return { success: false, error: 'No active directory handle granted' };
   }
 
   /* ── Individual File Writers ─────────────────────────────────── */
@@ -109,26 +129,42 @@ const DiskStorage = (() => {
       totalGB: '10 GB',
       pct: Math.min(100, Math.max(1, Math.round((mbUsed / 10240) * 100))),
       autoSave: 'Enabled (Every 30s)',
-      autoBackup: 'Enabled (Daily at 9 PM)',
+      autoBackup: 'Enabled (Daily at 7:30 PM)',
     };
   }
 
   /* ── Export Backup as Formatted Package / File ────────────────── */
   function exportBackupPackage(data) {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const fileName = `backup-${todayStr}.json`;
+    const d = new Date();
+    const YYYY = d.getFullYear();
+    const MM = String(d.getMonth() + 1).padStart(2, '0');
+    const DD = String(d.getDate()).padStart(2, '0');
+    const HH = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+
+    const fileName = `BillingSystem_Backup_${YYYY}-${MM}-${DD}_${HH}-${mm}.json`;
     const packageData = {
+      system: 'SVMH_BILLING_SYSTEM',
       version: '1.0.0',
-      system: 'Sree Vel Murugan Hardware & Tiles',
       storagePath: _storagePath,
-      exportedAt: new Date().toISOString(),
+      exportedAt: d.toISOString(),
+      data: {
+        bills: data.bills || [],
+        billItems: data.billItems || [],
+        products: data.products || [],
+        customers: data.customers || [],
+        settings: data.settings || {},
+        deletedBills: data.deletedBills || [],
+        meta: data.meta || {}
+      },
+      // Backward compatibility fields
       folders: {
         bills: data.bills || [],
         billItems: data.billItems || [],
         products: data.products || [],
         customers: data.customers || [],
         settings: data.settings || {},
-        reports: { generatedAt: todayStr },
+        reports: { generatedAt: `${YYYY}-${MM}-${DD}` },
       }
     };
     return { fileName, jsonString: JSON.stringify(packageData, null, 2) };
@@ -138,6 +174,7 @@ const DiskStorage = (() => {
     getStoragePath,
     setStoragePath,
     selectStorageFolder,
+    writeBackupToFolder,
     writeBillFile,
     removeBillFile,
     writeProductsFile,

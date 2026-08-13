@@ -257,7 +257,9 @@ const SettingsPage = (() => {
                   <div class="settings-field">
                     <label>Shop Logo Upload</label>
                     <div style="display:flex;align-items:center;gap:10px">
-                      <div class="set-logo-preview" id="logo-preview-box">SVMH</div>
+                      <div class="set-logo-preview" id="logo-preview-box">
+                        ${set.logoUrl ? `<img src="${_esc(set.logoUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;display:block;" />` : 'SVMH'}
+                      </div>
                       <input type="file" id="set-logo-file" accept="image/*" style="font-size:0.75rem" />
                     </div>
                   </div>
@@ -283,26 +285,6 @@ const SettingsPage = (() => {
                   </div>
                   <div class="settings-field">
                     <label>Round Off Strategy</label>
-                    <input type="text" value="Nearest Rupee" disabled />
-                  </div>
-                  <div class="settings-field">
-                    <label>Invoice Prefix</label>
-                    <input type="text" value="SVMH-" disabled />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- 4. Invoice & Printing Preferences Section -->
-            <div class="settings-card">
-              <div class="settings-card-hd">
-                <span class="sc-icon">⚙️</span>
-                Invoice &amp; Printing Preferences
-              </div>
-              <div class="settings-card-bd">
-                <div class="settings-field-grid">
-                  <div class="settings-field">
-                    <label for="set-default-payment">Default Payment Mode</label>
                     <select id="set-default-payment">
                       <option value="Cash" ${set.defaultPaymentMode==='Cash'?'selected':''}>Cash</option>
                       <option value="GPay" ${set.defaultPaymentMode==='GPay'?'selected':''}>GPay</option>
@@ -403,12 +385,28 @@ const SettingsPage = (() => {
       if (typeof DiskStorage !== 'undefined') {
         const res = await DiskStorage.selectStorageFolder();
         if (res.success) {
-          _showToast(`📁 Storage folder updated to: ${res.path}`, 'success');
+          _showToast(`📁 Storage folder set: ${res.path}`, 'success', 3200);
           render(container);
-        } else {
-          _showToast(`Storage path set: ${res.path}`, 'info');
+        } else if (res.error && res.error !== 'Folder selection cancelled') {
+          _showToast(`⚠️ ${res.error}`, 'error', 3500);
         }
       }
+    });
+
+    let _currentLogoUrl = set.logoUrl || '';
+
+    _$('set-logo-file')?.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        _currentLogoUrl = evt.target.result;
+        const box = _$('logo-preview-box');
+        if (box) {
+          box.innerHTML = `<img src="${_esc(_currentLogoUrl)}" style="max-width:100%;max-height:100%;object-fit:contain;display:block;" />`;
+        }
+      };
+      reader.readAsDataURL(file);
     });
 
     /* Save Settings */
@@ -422,6 +420,7 @@ const SettingsPage = (() => {
         footerText:         _$('set-footer-text')?.value  || set.footerText,
         thermalPrinter:     _$('set-thermal-printer')?.checked ?? false,
         a4Printer:          _$('set-a4-printer')?.checked ?? true,
+        logoUrl:            _currentLogoUrl,
       };
 
       if (typeof DB !== 'undefined') {
@@ -431,7 +430,7 @@ const SettingsPage = (() => {
     });
 
     /* Backup Now & Export Backup */
-    const downloadBackup = () => {
+    const downloadBackup = async () => {
       if (typeof DB !== 'undefined' && typeof DiskStorage !== 'undefined') {
         const fullData = {
           bills: DB.Bills.all(),
@@ -439,41 +438,72 @@ const SettingsPage = (() => {
           products: DB.Products.all(),
           customers: DB.Customers.all(),
           settings: DB.Settings.get(),
+          deletedBills: DB.Bills.deleted(),
         };
         const pkg = DiskStorage.exportBackupPackage(fullData);
+
+        // Attempt direct write to selected folder if handle granted
+        let fsRes = { success: false };
+        if (DiskStorage.writeBackupToFolder) {
+          fsRes = await DiskStorage.writeBackupToFolder(pkg.fileName, pkg.jsonString);
+        }
+
+        // Always trigger browser file download as guaranteed backup mechanism
         const blob = new Blob([pkg.jsonString], { type: 'application/json' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = pkg.fileName;
         link.click();
-        _showToast(`💾 Backup saved: ${pkg.fileName}`, 'success');
+
+        if (fsRes.success) {
+          _showToast(`💾 Backup written to selected folder & downloaded: ${pkg.fileName}`, 'success', 3500);
+        } else {
+          _showToast(`💾 Backup downloaded: ${pkg.fileName}`, 'success', 3500);
+        }
       }
     };
 
     _$('btn-backup-now')?.addEventListener('click', downloadBackup);
     _$('btn-export-backup')?.addEventListener('click', downloadBackup);
 
-    /* Restore JSON Import with Custom Warning Modal */
+    /* Restore JSON/ZIP Package Import with Safety Validation */
     _$('btn-restore-json')?.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      _showRestoreWarningModal(() => {
-        const reader = new FileReader();
-        reader.onload = (evt) => {
+      _showRestoreWarningModal(async () => {
+        try {
+          let jsonText = '';
+          if (typeof StorageHelper !== 'undefined' && StorageHelper.readBackupFile) {
+            jsonText = await StorageHelper.readBackupFile(file);
+          } else {
+            jsonText = await file.text();
+          }
+
           if (typeof DB !== 'undefined') {
-            const res = DB.restoreData(evt.target.result);
+            const res = DB.restoreData(jsonText);
             if (res.success) {
-              if (typeof DiskStorage !== 'undefined') DiskStorage.syncAllFiles(DB._raw ? { bills: DB.Bills.all(), products: DB.Products.all(), customers: DB.Customers.all(), settings: DB.Settings.get() } : {});
-              _showToast('✅ Database restored successfully from backup package', 'success');
+              if (typeof DiskStorage !== 'undefined') {
+                DiskStorage.syncAllFiles({
+                  bills: DB.Bills.all(),
+                  products: DB.Products.all(),
+                  customers: DB.Customers.all(),
+                  settings: DB.Settings.get()
+                });
+              }
+              _showToast(`✅ Database restored successfully (${res.billsCount || 0} bills recovered)`, 'success', 3500);
               setTimeout(() => render(container), 800);
             } else {
-              _showToast(`⚠️ Restore failed: ${res.error}`, 'error');
+              _showToast(`⚠️ Restore failed: ${res.error}`, 'error', 4500);
             }
           }
-        };
-        reader.readAsText(file);
+        } catch (err) {
+          console.error('[Settings] Restore exception:', err);
+          _showToast(`⚠️ Restore failed: ${err.message || 'Corrupted backup file'}`, 'error', 4500);
+        }
       });
+      // Reset input element so re-selecting same file triggers change
+      e.target.value = '';
     });
 
     /* Reset DB with Custom Modal */

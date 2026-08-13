@@ -97,20 +97,31 @@ html, body {
     page-break-inside: auto !important;
     break-inside: auto !important;
 }
+.inv-items-table th, .inv-items-table td {
+    vertical-align: top !important;
+    padding: 6px 8px !important;
+}
 .inv-items-table thead {
     display: table-header-group !important;
+}
+.inv-items-table tbody {
+    display: table-row-group !important;
 }
 .inv-items-table tr {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+    height: auto !important;
 }
 .inv-summary-wrap, .inv-footer-sig {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
 }
-.inv-cust-address, .inv-item-name {
+.inv-cust-address, .inv-item-name, .inv-col-desc {
     word-break: break-word !important;
-    overflow-wrap: break-word !important;
+    overflow-wrap: anywhere !important;
+}
+.inv-num-cell, .inv-totals-tbl td.txt-right {
+    white-space: nowrap !important;
 }
 </style>
 </head>

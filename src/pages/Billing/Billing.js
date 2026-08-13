@@ -275,7 +275,7 @@ const BillingPage = (() => {
     if (!inputEl) return;
     inputEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Tab') return;
-      const all = Array.from(document.querySelectorAll('#bill-table-body .qty-input, #bill-table-body .rate-input, #bill-table-body .disc-input, #bill-table-body .gst-input'));
+      const all = Array.from(document.querySelectorAll('#bill-table-body .name-input, #bill-table-body .qty-input, #bill-table-body .rate-input, #bill-table-body .disc-input, #bill-table-body .gst-input'));
       if (all.length === 0) return;
       const idx = all.indexOf(e.target);
       if (idx === -1) return;
@@ -325,7 +325,9 @@ const BillingPage = (() => {
       <td class="col-num row-num">${_itemCount}</td>
       <td class="col-name">
         <div class="row-product-wrap">
-          <div class="row-product-name" title="${_esc(product.name)}">${_esc(product.name)}</div>
+          <input type="text" class="name-input" id="name-${_rowCounter}"
+            value="${_esc(product.name)}" aria-label="Item Name for ${_esc(product.name)}"
+            style="width:100%;padding:4px 6px;border:1.5px solid #cbd5e1;border-radius:4px;font-weight:700;color:#0f172a;box-sizing:border-box" />
           ${subtitle ? `<div class="row-product-sub">${_esc(subtitle)}</div>` : ''}
         </div>
       </td>
@@ -361,10 +363,16 @@ const BillingPage = (() => {
       </td>
     `;
 
+    const nameInput = tr.querySelector('.name-input');
     const qtyInput  = tr.querySelector('.qty-input');
     const rateInput = tr.querySelector('.rate-input');
     const discInput = tr.querySelector('.disc-input');
     const gstInput  = tr.querySelector('.gst-input');
+
+    nameInput.addEventListener('input', () => {
+      tr.dataset.productName = nameInput.value;
+      _saveDraft();
+    });
 
     const _onChange = () => _calcAndUpdateRow(tr);
     qtyInput.addEventListener('input',  _onChange);
@@ -381,7 +389,7 @@ const BillingPage = (() => {
       gstInput.addEventListener('focus', () => _selectRow(tr));
       gstInput.addEventListener('blur', () => setTimeout(() => {
         const f = document.activeElement;
-        if (!f || (!f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
+        if (!f || (!f.classList.contains('name-input') && !f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
           _selectRow(null);
         }
       }, 80));
@@ -396,6 +404,7 @@ const BillingPage = (() => {
       _calcAndUpdateRow(tr);
     });
 
+    _wireTabNav(nameInput);
     _wireTabNav(qtyInput);
     _wireTabNav(rateInput);
     _wireTabNav(discInput);
@@ -404,16 +413,18 @@ const BillingPage = (() => {
       td.addEventListener('click', () => _selectRow(tr));
     });
 
+    nameInput.addEventListener('focus', () => _selectRow(tr));
     qtyInput.addEventListener('focus', () => _selectRow(tr));
     rateInput.addEventListener('focus', () => _selectRow(tr));
     discInput.addEventListener('focus', () => _selectRow(tr));
 
     const _onBlur = () => setTimeout(() => {
       const f = document.activeElement;
-      if (!f || (!f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
+      if (!f || (!f.classList.contains('name-input') && !f.classList.contains('qty-input') && !f.classList.contains('rate-input') && !f.classList.contains('disc-input') && !f.classList.contains('gst-input'))) {
         _selectRow(null);
       }
     }, 80);
+    nameInput.addEventListener('blur', _onBlur);
     qtyInput.addEventListener('blur',  _onBlur);
     rateInput.addEventListener('blur', _onBlur);
     discInput.addEventListener('blur', _onBlur);
@@ -470,7 +481,7 @@ const BillingPage = (() => {
       const calc    = BC ? BC.calcRow(qty, rate, discPct, gstPct, _isGstBill) : {};
       return {
         productId:   tr.dataset.productId   || null,
-        productName: tr.dataset.productName || '',
+        productName: (tr.querySelector('.name-input')?.value || '').trim() || tr.dataset.productName || '',
         hsn:         tr.dataset.hsn         || '',
         unit:        tr.dataset.unit        || '',
         qty, rate, discPct, gstPct,

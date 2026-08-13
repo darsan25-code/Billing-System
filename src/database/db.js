@@ -969,29 +969,84 @@ const DB = (() => {
 
   function backupData() {
     const backup = {
-      meta: Meta.get(),
-      settings: Settings.get(),
-      products: Products.all(),
-      customers: Customers.all(),
-      bills: Bills.all(),
-      billItems: T.get('bill_items'),
+      system: 'SVMH_BILLING_SYSTEM',
+      version: '1.0.0',
       exportedAt: _now(),
+      data: {
+        meta: Meta.get(),
+        settings: Settings.get(),
+        products: Products.all(),
+        customers: Customers.all(),
+        bills: Bills.all(),
+        billItems: T.get('bill_items'),
+        deletedBills: Bills.deleted(),
+      }
     };
     return JSON.stringify(backup, null, 2);
   }
 
-  function restoreData(jsonStr) {
+  function restoreData(inputData) {
     try {
-      const data = JSON.parse(jsonStr);
-      if (data.products)  T.set('products', data.products);
-      if (data.customers) T.set('customers', data.customers);
-      if (data.bills)     T.set('bills', data.bills);
-      if (data.billItems) T.set('bill_items', data.billItems);
-      if (data.settings)  T.set('settings', data.settings);
-      if (data.meta)      T.set('meta', data.meta);
-      return { success: true };
+      let data = (typeof inputData === 'string') ? JSON.parse(inputData) : inputData;
+      if (!data) return { success: false, error: 'Empty or invalid backup payload.' };
+
+      // Handle nested container formats (e.g. data.data, data.folders, or root)
+      let payload = data.data || data.folders || data;
+
+      const products = payload.products || data.products;
+      const customers = payload.customers || data.customers;
+      const bills = payload.bills || data.bills;
+      const billItems = payload.billItems || data.billItems;
+      const settings = payload.settings || data.settings;
+      const deletedBills = payload.deletedBills || data.deletedBills;
+      const meta = payload.meta || data.meta;
+
+      // Validation check
+      const hasProducts = Array.isArray(products);
+      const hasCustomers = Array.isArray(customers);
+      const hasBills = Array.isArray(bills);
+      const hasSettings = typeof settings === 'object' && settings !== null;
+
+      if (!hasProducts && !hasCustomers && !hasBills && !hasSettings) {
+        return { success: false, error: 'Invalid Billing System backup file format. Required data tables are missing.' };
+      }
+
+      // 1. Create safety snapshot of CURRENT data before modifying
+      const safetySnapshot = backupData();
+      localStorage.setItem(PFX + 'backup_before_restore', safetySnapshot);
+
+      // 2. Perform safe restoration of stored tables
+      if (products)     T.set('products', products);
+      if (customers)    T.set('customers', customers);
+      if (bills)        T.set('bills', bills);
+      if (billItems)    T.set('bill_items', billItems);
+      if (settings)     T.set('settings', settings);
+      if (deletedBills) T.set('deleted_bills', deletedBills);
+      if (meta)         T.set('meta', meta);
+
+      // Re-initialize DB in-memory cache
+      init();
+
+      return { success: true, billsCount: (bills || []).length };
     } catch (e) {
-      return { success: false, error: e.message };
+      console.error('[DB] Restore error:', e);
+      // Attempt rollback from safety snapshot
+      try {
+        const snap = localStorage.getItem(PFX + 'backup_before_restore');
+        if (snap) {
+          const snapObj = JSON.parse(snap);
+          const p = snapObj.data || snapObj;
+          if (p.products)  T.set('products', p.products);
+          if (p.customers) T.set('customers', p.customers);
+          if (p.bills)     T.set('bills', p.bills);
+          if (p.billItems) T.set('bill_items', p.billItems);
+          if (p.settings)  T.set('settings', p.settings);
+          init();
+        }
+      } catch (rbErr) {
+        console.error('[DB] Rollback failed:', rbErr);
+      }
+      return { success: false, error: e.message || 'Corrupted or invalid backup package.' };
     }
   }
 
