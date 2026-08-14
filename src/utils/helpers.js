@@ -66,13 +66,13 @@ ${styles}
 <style>
 @page {
     size: A4 portrait;
-    margin: 10mm 12mm;
+    margin: 8mm 10mm;
 }
 html, body {
     margin: 0 !important;
     padding: 0 !important;
     background: #ffffff !important;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     color: #0f172a !important;
 }
 .no-print, .invoice-toolbar, .print-hide, button {
@@ -90,17 +90,33 @@ html, body {
     padding: 0 !important;
     margin: 0 !important;
     width: 100% !important;
+    font-size: 9.5pt !important;
+}
+.inv-divider {
+    margin: 10px 0 !important;
+}
+.inv-meta-grid {
+    margin-bottom: 12px !important;
 }
 .inv-items-table {
     width: 100% !important;
+    table-layout: fixed !important;
     border-collapse: collapse !important;
+    margin-bottom: 14px !important;
     page-break-inside: auto !important;
     break-inside: auto !important;
 }
 .inv-items-table th, .inv-items-table td {
     vertical-align: top !important;
-    padding: 6px 8px !important;
+    padding: 5px 6px !important;
+    border: 1px solid #cbd5e1 !important;
 }
+.inv-col-seq   { width: 36px !important; }
+.inv-col-desc  { width: auto !important; }
+.inv-col-qty   { width: 55px !important; }
+.inv-col-unit  { width: 55px !important; }
+.inv-col-rate  { width: 110px !important; }
+.inv-col-total { width: 120px !important; }
 .inv-items-table thead {
     display: table-header-group !important;
 }
@@ -112,16 +128,24 @@ html, body {
     break-inside: avoid !important;
     height: auto !important;
 }
-.inv-summary-wrap, .inv-footer-sig {
+.inv-bottom-section, .inv-summary-wrap, .inv-footer-sig {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
 }
 .inv-cust-address, .inv-item-name, .inv-col-desc {
     word-break: break-word !important;
     overflow-wrap: anywhere !important;
+    white-space: normal !important;
 }
 .inv-num-cell, .inv-totals-tbl td.txt-right {
     white-space: nowrap !important;
+    word-break: keep-all !important;
+}
+.inv-footer-sig {
+    margin-top: 16px !important;
+}
+.sig-space {
+    height: 28px !important;
 }
 </style>
 </head>

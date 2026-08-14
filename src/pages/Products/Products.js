@@ -165,27 +165,7 @@ const ProductsPage = (() => {
         </tr>`;
     }).join('');
 
-    tbody.querySelectorAll('.prod-row').forEach(tr => {
-      tr.addEventListener('click', (e) => {
-        if (e.target.closest('.action-btn')) return;
-        const id = tr.dataset.prodId;
-        _selectRow(_selectedId === id ? null : id);
-      });
-    });
-
-    tbody.querySelectorAll('.action-edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _openModal(btn.dataset.id);
-      });
-    });
-
-    tbody.querySelectorAll('.action-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _confirmDelete(btn.dataset.id);
-      });
-    });
+    /* Table rows and action buttons are handled via event delegation in render() */
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -596,6 +576,29 @@ const ProductsPage = (() => {
     container.appendChild(page);
 
     _$('btn-add-product')?.addEventListener('click', () => _openModal(null));
+
+    const tbody = _$('prod-table-body');
+    if (tbody) {
+      tbody.addEventListener('click', (e) => {
+        const editBtn = e.target.closest('.action-edit');
+        if (editBtn) {
+          e.stopPropagation();
+          _openModal(editBtn.dataset.id);
+          return;
+        }
+        const delBtn = e.target.closest('.action-delete');
+        if (delBtn) {
+          e.stopPropagation();
+          _confirmDelete(delBtn.dataset.id);
+          return;
+        }
+        const tr = e.target.closest('.prod-row');
+        if (tr) {
+          const id = tr.dataset.prodId;
+          _selectRow(_selectedId === id ? null : id);
+        }
+      });
+    }
 
     const sinp = _$('prod-search-input');
     const sclr = _$('btn-clear-search');

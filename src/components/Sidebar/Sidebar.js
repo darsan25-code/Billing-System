@@ -16,26 +16,21 @@ const Sidebar = (() => {
   ];
 
   function mount(container) {
-    // Business name header
     const header = document.createElement('div');
-    header.style.cssText = 'padding:20px 16px 16px;border-bottom:1px solid rgba(255,255,255,0.1);';
+    header.className = 'sidebar-brand-header';
     header.innerHTML = `
-      <div style="font-size:0.7rem;opacity:0.55;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;">Billing System</div>
-      <div style="font-size:0.95rem;font-weight:600;line-height:1.3;">Sree Vel Murugan<br>Hardware &amp; Tiles</div>
+      <div style="font-size:0.68rem;opacity:0.6;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:4px;font-weight:700;">Billing System</div>
+      <div style="font-size:0.95rem;font-weight:800;line-height:1.3;color:#ffffff;letter-spacing:-0.01em;">Sree Vel Murugan<br><span style="color:#f59e0b">Hardware &amp; Tiles</span></div>
     `;
     container.appendChild(header);
 
     // Navigation list
     const nav = document.createElement('nav');
-    nav.style.cssText = 'padding:12px 0;flex:1;';
 
     menuItems.forEach(item => {
       const link = document.createElement('a');
       link.href = `#${item.page}`;
       link.dataset.page = item.page;
-      link.style.cssText =
-        'display:flex;align-items:center;gap:12px;padding:11px 20px;color:rgba(255,255,255,0.75);' +
-        'text-decoration:none;font-size:0.92rem;transition:background 0.15s,color 0.15s;';
       link.innerHTML = `<span>${item.icon}</span><span>${item.label}</span>`;
       nav.appendChild(link);
     });

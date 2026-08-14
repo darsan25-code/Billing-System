@@ -418,17 +418,22 @@ const DashboardPage = (() => {
             </div>
           </div>
 
-          <div class="recent-bills-card" style="border-top-left-radius:0;border-top-right-radius:0">
-            <div class="recent-bills-card-hd">
-              <span>${isTrash ? 'Deleted Invoices (Trash Bin)' : 'Bill History'}</span>
-              <span>Showing ${filteredBills.length} of ${targetBills.length} bill${targetBills.length !== 1 ? 's' : ''}</span>
-            </div>
-
-            ${filteredBills.length === 0 ? _emptyBillsHTML(isTrash) : _billsTableHTML(filteredBills, isTrash)}
+          <div class="recent-bills-card" style="border-top-left-radius:0;border-top-right-radius:0" id="dash-table-container">
+            ${_renderTableContainerHTML(isTrash, targetBills, filteredBills)}
           </div>
         </div>
 
       </div><!-- /dash-body -->
+    `;
+  }
+
+  function _renderTableContainerHTML(isTrash, targetBills, filteredBills) {
+    return `
+      <div class="recent-bills-card-hd">
+        <span>${isTrash ? 'Deleted Invoices (Trash Bin)' : 'Bill History'}</span>
+        <span>Showing ${filteredBills.length} of ${targetBills.length} bill${targetBills.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${filteredBills.length === 0 ? _emptyBillsHTML(isTrash) : _billsTableHTML(filteredBills, isTrash)}
     `;
   }
 
@@ -512,188 +517,202 @@ const DashboardPage = (() => {
       </div>`;
   }
 
-  /* ── Event Re-Registration Engine ────────────────────────────── */
+  /* ── Fast In-Place UI Refresh (No DOM Teardown) ────────────────── */
+  function _updateUI() {
+    const s            = (typeof DB !== 'undefined') ? DB.stats()         : { todayBills:0, todayRevenue:0, totalCustomers:0, totalBills:0, totalRevenue:0 };
+    const bills        = (typeof DB !== 'undefined') ? DB.Bills.all()     : [];
+    const deletedBills = (typeof DB !== 'undefined') ? DB.Bills.deleted() : [];
+
+    const isTrash = (_viewTab === 'trash');
+    const targetBills = isTrash ? deletedBills : bills;
+    const filteredBills = _filterBills(targetBills);
+
+    // Update stat numbers
+    const elBills = document.getElementById('stat-today-bills');
+    const elRev   = document.getElementById('stat-today-rev');
+    const elCust  = document.getElementById('stat-customers');
+    const elTot   = document.getElementById('stat-total-bills');
+
+    if (elBills) elBills.textContent = s.todayBills;
+    if (elRev)   elRev.textContent   = fmtINR(s.todayRevenue);
+    if (elCust)  elCust.textContent  = s.totalCustomers;
+    if (elTot)   elTot.textContent   = s.totalBills;
+
+    // Update tab labels
+    const tabActive  = document.getElementById('tab-active-bills');
+    const tabDeleted = document.getElementById('tab-deleted-bills');
+    if (tabActive)  tabActive.textContent  = `Active Bills (${bills.length})`;
+    if (tabDeleted) tabDeleted.textContent = `🗑️ Trash Bin (${deletedBills.length})`;
+
+    // Update table container
+    const tblContainer = document.getElementById('dash-table-container');
+    if (tblContainer) {
+      tblContainer.innerHTML = _renderTableContainerHTML(isTrash, targetBills, filteredBills);
+    }
+  }
+
+  /* ── Event Registration Engine (Bound Once) ────────────────────── */
   function initializeDashboardEvents(page, container) {
     const navigate = (hash) => (window.location.hash = hash);
 
-    document.getElementById('qa-new-bill')?.addEventListener('click',       () => navigate('billing'));
-    document.getElementById('qa-products')?.addEventListener('click',       () => navigate('products'));
-    document.getElementById('qa-customers')?.addEventListener('click',      () => navigate('customers'));
-    document.getElementById('qa-reports')?.addEventListener('click',        () => navigate('reports'));
-    document.getElementById('qa-empty-new-bill')?.addEventListener('click', () => navigate('billing'));
+    page.addEventListener('click', (e) => {
+      // Navigation & Header buttons
+      if (e.target.closest('#qa-new-bill') || e.target.closest('#qa-empty-new-bill')) { navigate('billing'); return; }
+      if (e.target.closest('#qa-products'))  { navigate('products');  return; }
+      if (e.target.closest('#qa-customers')) { navigate('customers'); return; }
+      if (e.target.closest('#qa-reports'))   { navigate('reports');   return; }
+      if (e.target.closest('#btn-refresh-dash')) { render(container); return; }
 
-    document.getElementById('btn-refresh-dash')?.addEventListener('click', () => render(container));
+      // Tabs
+      const activeTabBtn = e.target.closest('#tab-active-bills');
+      if (activeTabBtn) {
+        _viewTab = 'active';
+        page.querySelectorAll('.rpt-filter-buttons .rpt-filter-btn').forEach(b => b.classList.remove('active'));
+        activeTabBtn.classList.add('active');
+        _updateUI();
+        return;
+      }
+      const delTabBtn = e.target.closest('#tab-deleted-bills');
+      if (delTabBtn) {
+        _viewTab = 'trash';
+        page.querySelectorAll('.rpt-filter-buttons .rpt-filter-btn').forEach(b => b.classList.remove('active'));
+        delTabBtn.classList.add('active');
+        _updateUI();
+        return;
+      }
 
-    /* View Tab Toggle (Active vs Trash) */
-    document.getElementById('tab-active-bills')?.addEventListener('click', () => {
-      _viewTab = 'active';
-      render(container);
-    });
+      // Date Filter Buttons
+      const dfBtn = e.target.closest('.rpt-filter-btn[data-df]');
+      if (dfBtn) {
+        _dateFilter = dfBtn.dataset.df;
+        page.querySelectorAll('.rpt-filter-btn[data-df]').forEach(b => b.classList.remove('active'));
+        dfBtn.classList.add('active');
+        const customRange = document.getElementById('dash-custom-range');
+        if (customRange) customRange.style.display = (_dateFilter === 'custom') ? 'flex' : 'none';
+        _updateUI();
+        return;
+      }
 
-    document.getElementById('tab-deleted-bills')?.addEventListener('click', () => {
-      _viewTab = 'trash';
-      render(container);
-    });
+      if (e.target.closest('#btn-apply-dash-custom')) {
+        _customStart = document.getElementById('dash-start-date')?.value || '';
+        _customEnd   = document.getElementById('dash-end-date')?.value   || '';
+        _updateUI();
+        return;
+      }
 
-    /* Date Filter Buttons */
-    page.querySelectorAll('.rpt-filter-btn[data-df]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        _dateFilter = btn.dataset.df;
-        render(container);
-      });
-    });
-
-    document.getElementById('btn-apply-dash-custom')?.addEventListener('click', () => {
-      _customStart = document.getElementById('dash-start-date')?.value || '';
-      _customEnd   = document.getElementById('dash-end-date')?.value   || '';
-      render(container);
-    });
-
-    /* Search Input Event */
-    const searchInp = document.getElementById('dash-bill-search');
-    if (searchInp) {
-      searchInp.addEventListener('input', (e) => {
-        _searchQuery = e.target.value;
-        const cursorPosition = e.target.selectionStart;
-        render(container);
-        const newSearchInp = document.getElementById('dash-bill-search');
-        if (newSearchInp) {
-          newSearchInp.focus();
-          try {
-            newSearchInp.setSelectionRange(cursorPosition, cursorPosition);
-          } catch (err) {}
-        }
-      });
-    }
-
-    /* Edit Payment Method Handlers */
-    page.querySelectorAll('.btn-edit-payment').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // Edit Payment Button
+      const editPayBtn = e.target.closest('.btn-edit-payment');
+      if (editPayBtn) {
         e.stopPropagation();
-        const id       = btn.dataset.id;
-        const no       = btn.dataset.no;
-        const cust     = btn.dataset.cust;
-        const curMode  = btn.dataset.mode;
-
+        const id      = editPayBtn.dataset.id;
+        const no      = editPayBtn.dataset.no;
+        const cust    = editPayBtn.dataset.cust;
+        const curMode = editPayBtn.dataset.mode;
         _showEditPaymentModal(no, cust, curMode, (newMode) => {
-          console.log("Payment updated");
           if (typeof DB !== 'undefined') {
             const res = DB.updateBillPaymentMode(id, newMode);
             if (res.success) {
-              console.log("Database updated");
               _showToast('✅ Payment method updated', 'success', 2800);
-              render(container);
+              _updateUI();
             }
           }
         });
-      });
-    });
+        return;
+      }
 
-    /* View & Print & Edit handlers */
-    page.querySelectorAll('.btn-dash-edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // View Button
+      const viewBtn = e.target.closest('.btn-dash-view');
+      if (viewBtn) {
         e.stopPropagation();
-        const no = btn.dataset.no;
-        if (no) {
-          localStorage.setItem('editingInvoiceId', no);
-        }
-        window.location.hash = 'billing';
-      });
-    });
-
-    page.querySelectorAll('.btn-dash-view').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const no = btn.dataset.no;
+        const no = viewBtn.dataset.no;
         if (typeof InvoicePreview !== 'undefined') InvoicePreview.show(no);
-      });
-    });
+        return;
+      }
 
-    page.querySelectorAll('.btn-dash-print').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // Edit Bill Button
+      const editBtn = e.target.closest('.btn-dash-edit');
+      if (editBtn) {
         e.stopPropagation();
-        const no = btn.dataset.no;
+        const no = editBtn.dataset.no;
+        if (no) localStorage.setItem('editingInvoiceId', no);
+        window.location.hash = 'billing';
+        return;
+      }
+
+      // Print Button
+      const printBtn = e.target.closest('.btn-dash-print');
+      if (printBtn) {
+        e.stopPropagation();
+        const no = printBtn.dataset.no;
         if (typeof InvoicePreview !== 'undefined') {
           InvoicePreview.show(no);
           setTimeout(() => window.print(), 300);
         }
-      });
-    });
+        return;
+      }
 
-    /* Event Delegation for Delete Buttons */
-    page.addEventListener('click', (e) => {
-      const btn = e.target.closest('.delete-btn, .btn-dash-delete');
-      if (!btn) return;
-      e.stopPropagation();
-
-      const id     = btn.dataset.id;
-      const no     = btn.dataset.no || id;
-      const cust   = btn.dataset.cust || '';
-      const amount = btn.dataset.amount || '';
-      const row    = btn.closest('.dash-bill-row');
-
-      if (btn.classList.contains('btn-dash-perm-delete')) return; // handled separately below
-
-      _showDeleteConfirmation(no, cust, amount, () => {
-        if (typeof DB !== 'undefined') {
-          const res = DB.deleteBill(id);
-          if (res && res.success) {
-            if (row && row.parentNode) row.remove();
-
-            const newStats = DB.stats();
-            const elBills = document.getElementById('stat-today-bills');
-            const elRev   = document.getElementById('stat-today-rev');
-            const elCust  = document.getElementById('stat-customers');
-            const elTot   = document.getElementById('stat-total-bills');
-
-            if (elBills) elBills.textContent = newStats.todayBills;
-            if (elRev)   elRev.textContent   = fmtINR(newStats.todayRevenue);
-            if (elCust)  elCust.textContent  = newStats.totalCustomers;
-            if (elTot)   elTot.textContent   = newStats.totalBills;
-
-            _showToast('🗑️ Bill deleted successfully', 'success', 3200);
-          }
-        }
-      });
-    });
-
-    /* Restore Action */
-    page.querySelectorAll('.btn-dash-restore').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // Delete Button
+      const delBtn = e.target.closest('.btn-dash-delete');
+      if (delBtn && !delBtn.classList.contains('btn-dash-perm-delete')) {
         e.stopPropagation();
-        console.log("Restore clicked");
-        const id = btn.dataset.id;
+        const id     = delBtn.dataset.id;
+        const no     = delBtn.dataset.no || id;
+        const cust   = delBtn.dataset.cust || '';
+        const amount = delBtn.dataset.amount || '';
+        _showDeleteConfirmation(no, cust, amount, () => {
+          if (typeof DB !== 'undefined') {
+            const res = DB.deleteBill(id);
+            if (res && res.success) {
+              _showToast('🗑️ Bill moved to Trash Bin', 'success', 3200);
+              _updateUI();
+            }
+          }
+        });
+        return;
+      }
+
+      // Restore Button
+      const restoreBtn = e.target.closest('.btn-dash-restore');
+      if (restoreBtn) {
+        e.stopPropagation();
+        const id = restoreBtn.dataset.id;
         if (typeof DB !== 'undefined') {
           const res = DB.restoreBill(id);
           if (res.success) {
-            console.log("Database updated");
             _showToast(`Bill ${res.bill.billNo} restored successfully.`, 'success', 3200);
-            render(container);
+            _updateUI();
           }
         }
-      });
-    });
+        return;
+      }
 
-    /* Permanent Delete Action */
-    page.querySelectorAll('.btn-dash-perm-delete').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      // Permanent Delete Button
+      const permDelBtn = e.target.closest('.btn-dash-perm-delete');
+      if (permDelBtn) {
         e.stopPropagation();
-        console.log("Delete clicked");
-        const id = btn.dataset.id;
-        const no = btn.dataset.no;
-
+        const id = permDelBtn.dataset.id;
+        const no = permDelBtn.dataset.no;
         _showPermanentDeleteModal(no, () => {
           if (typeof DB !== 'undefined') {
             const res = DB.permanentlyDeleteBill(id);
             if (res.success) {
-              console.log("Database updated");
               _showToast('✅ Bill permanently deleted', 'success', 3200);
-              render(container);
+              _updateUI();
             }
           }
         });
-      });
+        return;
+      }
     });
+
+    /* Search Input Event — In-Place Refresh (No DOM teardown!) */
+    const searchInp = document.getElementById('dash-bill-search');
+    if (searchInp) {
+      searchInp.addEventListener('input', (e) => {
+        _searchQuery = e.target.value;
+        _updateUI();
+      });
+    }
   }
 
   /* ── Render ─────────────────────────────────────────────────── */
@@ -722,7 +741,7 @@ const DashboardPage = (() => {
     page.innerHTML = _buildHTML(s, bills, deletedBills);
     container.appendChild(page);
 
-    /* Automatically initialize dashboard events on every UI render */
+    /* Bind events once */
     initializeDashboardEvents(page, container);
   }
 

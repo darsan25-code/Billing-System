@@ -235,16 +235,7 @@ const CustomersPage = (() => {
         </tr>`;
     }).join('');
 
-    /* Wire buttons */
-    tbody.querySelectorAll('.action-history').forEach(btn => {
-      btn.addEventListener('click', () => _openHistoryModal(btn.dataset.id));
-    });
-    tbody.querySelectorAll('.action-edit').forEach(btn => {
-      btn.addEventListener('click', () => _openCustomerModal(btn.dataset.id));
-    });
-    tbody.querySelectorAll('.action-delete').forEach(btn => {
-      btn.addEventListener('click', () => _handleDelete(btn.dataset.id, btn));
-    });
+    /* Table action buttons handled via event delegation in render() */
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -533,6 +524,27 @@ const CustomersPage = (() => {
     container.appendChild(page);
 
     _$('btn-add-customer')?.addEventListener('click', () => _openCustomerModal(null));
+
+    const tbody = _$('cust-table-body');
+    if (tbody) {
+      tbody.addEventListener('click', (e) => {
+        const histBtn = e.target.closest('.action-history');
+        if (histBtn) {
+          _openHistoryModal(histBtn.dataset.id);
+          return;
+        }
+        const editBtn = e.target.closest('.action-edit');
+        if (editBtn) {
+          _openCustomerModal(editBtn.dataset.id);
+          return;
+        }
+        const delBtn = e.target.closest('.action-delete');
+        if (delBtn) {
+          _handleDelete(delBtn.dataset.id, delBtn);
+          return;
+        }
+      });
+    }
 
     const sinp = _$('cust-search-input');
     const sclr = _$('btn-clear-cust-search');
