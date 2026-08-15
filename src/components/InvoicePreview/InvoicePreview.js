@@ -184,7 +184,7 @@ const InvoicePreview = (() => {
                 <div class="words-val">${words}</div>
                 <div class="inv-terms-note">
                   <strong>Terms &amp; Conditions:</strong><br>
-                  ${(typeof DB !== 'undefined' && DB.Settings.get().footerText) ? _esc(DB.Settings.get().footerText) : '1. Goods once sold will not be taken back or exchanged.<br>2. Subject to local jurisdiction only.'}
+                  ${(typeof DB !== 'undefined' && DB.Settings.get().footerText) ? _esc(DB.Settings.get().footerText) : '1. Goods once sold will not be taken back or exchanged.<br>2. Subject to local jurisdiction only.<br>3. GST Extra'}
                 </div>
               </div>
               <div class="inv-totals-box">
