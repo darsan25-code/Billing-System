@@ -23,13 +23,33 @@ const BillingPage = (() => {
   let _editingBillId= null;   // ID of bill currently being edited
   let _editingBillNo= null;   // Bill number of bill currently being edited
   let _isRestoringDraft = false; // Prevents draft save loops during restoration
+  let _isSaving = false;         // Atomic re-entrancy lock to prevent duplicate save submissions
+  let _lastFocusedBeforeQuickAdd = null; // Preserves keyboard focus before Quick Add opens
 
   /* ── F6 Global Keyboard Trap ── */
   document.addEventListener('keydown', (e) => {
     if (e.key === 'F6' || e.key === 'f6' || e.keyCode === 117) {
       e.preventDefault();
       e.stopPropagation();
+      const qaOverlay = document.getElementById('quick-add-modal-overlay');
+      if (qaOverlay && qaOverlay.classList.contains('qa-overlay-visible')) {
+        const nameInput = document.getElementById('qa-name');
+        if (nameInput) { nameInput.focus(); nameInput.select(); }
+        return;
+      }
       if (typeof _openQuickAddModal === 'function') _openQuickAddModal();
+    }
+  }, true);
+
+  /* ── Escape Global Keyboard Trap for Quick Add Modal ── */
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === 'Esc' || e.keyCode === 27) {
+      const qaOverlay = document.getElementById('quick-add-modal-overlay');
+      if (qaOverlay && qaOverlay.classList.contains('qa-overlay-visible')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof _closeQuickAddModal === 'function') _closeQuickAddModal();
+      }
     }
   }, true);
 
@@ -503,35 +523,74 @@ const BillingPage = (() => {
   }
 
   function _saveBill() {
-    console.log("Save clicked");
-
-    const data = _collectBillData();
-
-    /* ── Validation ── */
-    if (!data.items || data.items.length === 0) {
-      _showToast('⚠️ Add at least one product to the bill.', 'warning');
+    if (_isSaving) {
+      console.warn('[Billing] Save already in progress, ignoring duplicate trigger');
       return;
     }
+    _isSaving = true;
 
-    const invalidQtyRow = data.items.findIndex(i => !i.qty || i.qty <= 0);
-    if (invalidQtyRow !== -1) {
-      _showToast(`⚠️ Row ${invalidQtyRow + 1}: Quantity cannot be zero or negative.`, 'warning');
-      const qtyInp = document.querySelectorAll('#bill-table-body .qty-input')[invalidQtyRow];
-      if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
-      return;
-    }
+    const saveBtns = ['btn-save-top', 'btn-save-main'].map(id => _$(id)).filter(Boolean);
+    const originalLabels = saveBtns.map(b => b.innerHTML);
 
-    /* ── 1. Detect edit mode ── */
-    const editingInvoiceId = localStorage.getItem('editingInvoiceId');
+    saveBtns.forEach(btn => {
+      btn.disabled = true;
+      btn.classList.add('disabled-saving');
+      btn.innerHTML = `Saving...`;
+    });
 
-    if (editingInvoiceId) {
-      /* ── 2. DO NOT create a new invoice — Update existing ── */
-      let result = null;
-      const targetId = _editingBillId || editingInvoiceId;
-      const targetNo = _editingBillNo || editingInvoiceId;
+    const _restoreSaveButtons = (label = null) => {
+      saveBtns.forEach((btn, idx) => {
+        btn.disabled = false;
+        btn.classList.remove('disabled-saving', 'btn-saved-success');
+        btn.innerHTML = label !== null ? label : (originalLabels[idx] || `${IC.save} Save Bill`);
+        btn.style.backgroundColor = '';
+        btn.style.color = '';
+        btn.style.borderColor = '';
+      });
+      _isSaving = false;
+    };
 
-      if (typeof DB !== 'undefined' && typeof DB.updateBill === 'function') {
-        result = DB.updateBill({
+    try {
+      const data = _collectBillData();
+
+      /* ── 1. Validation ── */
+      if (!data.items || data.items.length === 0) {
+        _showToast('⚠️ Add at least one product to the bill.', 'warning');
+        _restoreSaveButtons();
+        return;
+      }
+
+      const invalidQtyRow = data.items.findIndex(i => !i.qty || i.qty <= 0);
+      if (invalidQtyRow !== -1) {
+        _showToast(`⚠️ Row ${invalidQtyRow + 1}: Quantity cannot be zero or negative.`, 'warning');
+        const qtyInp = document.querySelectorAll('#bill-table-body .qty-input')[invalidQtyRow];
+        if (qtyInp) { qtyInp.focus(); qtyInp.select(); }
+        _restoreSaveButtons();
+        return;
+      }
+
+      const invalidRateRow = data.items.findIndex(i => i.rate === undefined || i.rate === null || i.rate < 0);
+      if (invalidRateRow !== -1) {
+        _showToast(`⚠️ Row ${invalidRateRow + 1}: Price must be zero or greater.`, 'warning');
+        _restoreSaveButtons();
+        return;
+      }
+
+      /* ── 2. Detect edit mode ── */
+      const editingInvoiceId = localStorage.getItem('editingInvoiceId') || _editingBillId;
+
+      if (editingInvoiceId) {
+        /* Update existing bill */
+        const targetId = _editingBillId || editingInvoiceId;
+        const targetNo = _editingBillNo || editingInvoiceId;
+
+        if (typeof DB === 'undefined' || typeof DB.updateBill !== 'function') {
+          _showToast('❌ Database update service is not available.', 'error');
+          _restoreSaveButtons();
+          return;
+        }
+
+        const result = DB.updateBill({
           billId:          targetId,
           customerName:    data.customerName,
           customerPhone:   data.customerPhone,
@@ -542,124 +601,117 @@ const BillingPage = (() => {
           items:           data.items,
           totals:          data.totals,
         });
-      }
 
-      /* Fallback direct localStorage update if DB function not found */
-      if (!result || !result.success) {
-        try {
-          const rawKey = localStorage.getItem('svmh_bills') ? 'svmh_bills' : 'bills';
-          const bills = JSON.parse(localStorage.getItem(rawKey) || localStorage.getItem('bills') || '[]');
-          const index = bills.findIndex(b => b.invoiceNo === editingInvoiceId || b.billNo === editingInvoiceId || b.id === editingInvoiceId);
+        if (result && result.success) {
+          _playSuccessSound();
+          _showToast('Bill updated successfully', 'success', 2000);
 
-          if (index !== -1) {
-            const invNo = bills[index].invoiceNo || bills[index].billNo || editingInvoiceId;
-            const updatedBill = {
-              ...bills[index],
-              invoiceNo:       invNo,
-              billNo:          invNo,
-              customerName:    data.customerName || 'Walk-in Customer',
-              customerPhone:   data.customerPhone || '',
-              customerAddress: data.customerAddress || '',
-              address:         data.customerAddress || '',
-              paymentMode:     data.paymentMode,
-              paymentMethod:   data.paymentMode,
-              billType:        _isGstBill ? 'gst' : 'normal',
-              items:           data.items,
-              itemCount:       data.items.length,
-              subtotal:        data.totals.subtotal || 0,
-              totalGst:        data.totals.totalGst || 0,
-              billDiscount:    data.totals.billDiscount || 0,
-              roundOff:        data.totals.roundOff || 0,
-              grandTotal:      data.totals.grandTotal || 0,
-              updatedAt:       new Date().toISOString(),
-            };
-            bills[index] = updatedBill;
-            localStorage.setItem('bills', JSON.stringify(bills));
-            localStorage.setItem('svmh_bills', JSON.stringify(bills));
-            result = { success: true, bill: updatedBill };
-          }
-        } catch (e) {
-          console.error("Direct update error:", e);
+          localStorage.removeItem('editingInvoiceId');
+          localStorage.removeItem('billing_draft');
+          localStorage.removeItem('svmh_billing_draft');
+
+          _lastSavedBill = result.bill;
+          _editingBillId = result.bill.id;
+          _editingBillNo = result.bill.billNo || result.bill.invoiceNo;
+
+          saveBtns.forEach(btn => {
+            btn.innerHTML = `Saved ✓`;
+            btn.style.backgroundColor = '#16a34a';
+            btn.style.color = '#ffffff';
+            btn.style.borderColor = '#15803d';
+            btn.classList.add('btn-saved-success');
+          });
+
+          // Redirect to dashboard after 400ms
+          setTimeout(() => {
+            _isSaving = false;
+            window.location.hash = 'dashboard';
+          }, 400);
+          return;
+        } else {
+          _showToast(`❌ Failed to update bill: ${result?.error || 'Database write error'}`, 'error', 3500);
+          _restoreSaveButtons(`${IC.save} Update Bill`);
+          return;
         }
       }
 
-      if (result && result.success) {
-        _playSuccessSound();
-
-        /* 8. Show toast: "Bill updated successfully" for 2 seconds */
-        _showToast('Bill updated successfully', 'success', 2000);
-
-        /* 9. After successful update: remove editingInvoiceId */
-        localStorage.removeItem('editingInvoiceId');
-        _editingBillId = null;
-        _editingBillNo = null;
-
-        /* 10. Automatically redirect to Dashboard */
-        setTimeout(() => {
-          window.location.hash = 'dashboard';
-        }, 300);
-        return;
-      } else {
-        _showToast('❌ Failed to update bill.', 'error');
+      /* ── 3. Normal Save Bill Flow ── */
+      if (typeof DB === 'undefined' || typeof DB.saveBill !== 'function') {
+        _showToast('❌ Database save service is not available.', 'error');
+        _restoreSaveButtons();
         return;
       }
-    }
 
-    /* ── 13. Normal Save Bill Flow (if editingInvoiceId is empty) ── */
-    const result = DB.saveBill({
-      customerName:    data.customerName,
-      customerPhone:   data.customerPhone,
-      customerAddress: data.customerAddress,
-      billType:        _isGstBill ? 'gst' : 'normal',
-      paymentMode:     data.paymentMode,
-      billNo:          data.billNo,
-      items:           data.items,
-      totals:          data.totals,
-    });
+      const result = DB.saveBill({
+        customerName:    data.customerName,
+        customerPhone:   data.customerPhone,
+        customerAddress: data.customerAddress,
+        billType:        _isGstBill ? 'gst' : 'normal',
+        paymentMode:     data.paymentMode,
+        billNo:          data.billNo,
+        items:           data.items,
+        totals:          data.totals,
+      });
 
-    if (!result || !result.success) {
-      _showToast('❌ Failed to save bill.', 'error');
-      return;
-    }
+      if (!result || !result.success) {
+        const errorMsg = result?.error || (result?.errors && result.errors.join(' · ')) || 'Storage write failed';
+        _showToast(`❌ Failed to save bill: ${errorMsg}`, 'error', 4000);
+        _restoreSaveButtons();
+        return;
+      }
 
-    console.log("Database save success");
-    localStorage.removeItem('svmh_bill_draft');
-    localStorage.removeItem('svmh_billing_draft');
-    localStorage.removeItem('billing_draft');
+      // Successful write confirmed by database
+      localStorage.removeItem('svmh_bill_draft');
+      localStorage.removeItem('svmh_billing_draft');
+      localStorage.removeItem('billing_draft');
 
-    _lastSavedBill = result.bill;
-    const savedBillNo = result.bill.billNo;
-    const saveTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+      _lastSavedBill = result.bill;
+      _editingBillId = result.bill.id;
+      _editingBillNo = result.bill.billNo;
+      const savedBillNo = result.bill.billNo;
+      const saveTime = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-    _playSuccessSound();
-    _showSaveToast(savedBillNo, saveTime);
+      _playSuccessSound();
+      _showSaveToast(savedBillNo, saveTime);
 
-    const billNoEl = _$('bill-number');
-    if (billNoEl) {
-      billNoEl.innerHTML = `${savedBillNo} <span class="saved-badge" style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:800;margin-left:8px;display:inline-flex;align-items:center;gap:4px">SAVED ✓</span>`;
-    }
-    _setText('summary-bill-no', savedBillNo);
+      const billNoEl = _$('bill-number');
+      if (billNoEl) {
+        billNoEl.innerHTML = `${savedBillNo} <span class="saved-badge" style="background:#10b981;color:#fff;padding:2px 8px;border-radius:4px;font-size:0.75rem;font-weight:800;margin-left:8px;display:inline-flex;align-items:center;gap:4px">SAVED ✓</span>`;
+      }
+      _setText('summary-bill-no', savedBillNo);
 
-    const viewBtnTop  = _$('btn-view-invoice-top');
-    const viewBtnMain = _$('btn-view-invoice-main');
-    if (viewBtnTop)  viewBtnTop.style.display  = 'inline-flex';
-    if (viewBtnMain) viewBtnMain.style.display = 'inline-flex';
+      const viewBtnTop  = _$('btn-view-invoice-top');
+      const viewBtnMain = _$('btn-view-invoice-main');
+      if (viewBtnTop)  viewBtnTop.style.display  = 'inline-flex';
+      if (viewBtnMain) viewBtnMain.style.display = 'inline-flex';
 
-    ['btn-save-top','btn-save-main'].forEach(id => {
-      const btn = _$(id);
-      if (!btn) return;
-      btn.disabled = true;
-      btn.innerHTML = `Saved ✓`;
-      btn.style.backgroundColor = '#16a34a';
-      btn.style.color = '#ffffff';
-      btn.style.borderColor = '#15803d';
-      btn.classList.add('disabled-saving', 'btn-saved-success');
+      saveBtns.forEach(btn => {
+        btn.disabled = true;
+        btn.innerHTML = `Saved ✓`;
+        btn.style.backgroundColor = '#16a34a';
+        btn.style.color = '#ffffff';
+        btn.style.borderColor = '#15803d';
+        btn.classList.add('btn-saved-success');
+      });
 
+      // After 2.5 seconds, enable button as "Update Bill" so further changes update this invoice without duplicates
       setTimeout(() => {
-        btn.disabled = false;
-        btn.classList.remove('disabled-saving');
-      }, 3000);
-    });
+        saveBtns.forEach(btn => {
+          btn.disabled = false;
+          btn.classList.remove('disabled-saving', 'btn-saved-success');
+          btn.innerHTML = `${IC.save} Update Bill`;
+          btn.style.backgroundColor = '';
+          btn.style.color = '';
+          btn.style.borderColor = '';
+        });
+        _isSaving = false;
+      }, 2500);
+
+    } catch (err) {
+      console.error('[Billing] Exception during _saveBill:', err);
+      _showToast(`❌ Error saving bill: ${err.message || 'Unexpected error'}`, 'error', 4000);
+      _restoreSaveButtons();
+    }
   }
 
   function _playSuccessSound() {
@@ -868,6 +920,12 @@ const BillingPage = (() => {
      ═══════════════════════════════════════════════════════════════ */
   function _openQuickAddModal() {
     let overlay = document.getElementById('quick-add-modal-overlay');
+    if (overlay && overlay.classList.contains('qa-overlay-visible')) {
+      const nameInput = document.getElementById('qa-name');
+      if (nameInput) { nameInput.focus(); nameInput.select(); }
+      return;
+    }
+    _lastFocusedBeforeQuickAdd = document.activeElement;
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.id = 'quick-add-modal-overlay';
@@ -1037,9 +1095,13 @@ const BillingPage = (() => {
       overlay.classList.remove('qa-overlay-visible');
     }
     setTimeout(() => {
-      const searchInp = document.getElementById('product-search-input');
-      if (searchInp) {
-        searchInp.focus();
+      if (_lastFocusedBeforeQuickAdd && typeof _lastFocusedBeforeQuickAdd.focus === 'function' && document.body.contains(_lastFocusedBeforeQuickAdd)) {
+        try { _lastFocusedBeforeQuickAdd.focus(); } catch (e) {}
+      } else {
+        const searchInp = document.getElementById('product-search-input');
+        if (searchInp) {
+          try { searchInp.focus(); } catch (e) {}
+        }
       }
     }, 50);
   }

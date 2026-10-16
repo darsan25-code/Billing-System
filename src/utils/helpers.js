@@ -142,10 +142,43 @@ html, body {
     word-break: keep-all !important;
 }
 .inv-footer-sig {
-    margin-top: 16px !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: flex-end !important;
+    margin-top: 12px !important;
 }
 .sig-space {
     height: 28px !important;
+}
+.inv-qr-block {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    margin: 0 12px !important;
+}
+.inv-qr-code {
+    width: 56px !important;
+    height: 56px !important;
+    background: #ffffff !important;
+    padding: 3px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 4px !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+}
+.inv-qr-code svg {
+    width: 100% !important;
+    height: 100% !important;
+    display: block !important;
+}
+.inv-qr-label {
+    font-size: 6.5pt !important;
+    font-weight: 600 !important;
+    color: #334155 !important;
+    margin-top: 2px !important;
+    white-space: nowrap !important;
 }
 </style>
 </head>

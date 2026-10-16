@@ -10,3 +10,7 @@ temp/
 !backup/
 !invoices/
 !reports/
+
+# Local backups and generated archives
+/repaired-billing-system.zip
+/source-backup-2026-10-16.zip

@@ -71,47 +71,83 @@ const DiskStorage = (() => {
   }
 
   /* ── Individual File Writers ─────────────────────────────────── */
-  function writeBillFile(bill, items = []) {
+  async function writeBillFile(bill, items = []) {
     if (!bill || !bill.billNo) return;
-    const fileName = `${bill.billNo}.json`;
-    const payload = JSON.stringify({ bill, items, savedAt: new Date().toISOString() }, null, 2);
-    try {
-      localStorage.setItem(`${PFX}bill_${bill.billNo}`, payload);
-    } catch (e) {}
+    if (_dirHandle) {
+      try {
+        const fileName = `${bill.billNo}.json`;
+        const payload = JSON.stringify({ bill, items, savedAt: new Date().toISOString() }, null, 2);
+        const billsDir = await _dirHandle.getDirectoryHandle('bills', { create: true });
+        const fileHandle = await billsDir.getFileHandle(fileName, { create: true });
+        const writable = await fileHandle.createWritable();
+        await writable.write(payload);
+        await writable.close();
+      } catch (err) {
+        console.warn('[DiskStorage] Directory write error for bill:', err);
+      }
+    }
   }
 
-  function removeBillFile(billNo) {
-    if (!billNo) return;
-    localStorage.removeItem(`${PFX}bill_${billNo}`);
+  async function removeBillFile(billNo) {
+    if (!billNo || !_dirHandle) return;
+    try {
+      const billsDir = await _dirHandle.getDirectoryHandle('bills', { create: false });
+      await billsDir.removeEntry(`${billNo}.json`);
+    } catch (err) {
+      // Ignore if file does not exist on disk
+    }
   }
 
-  function writeProductsFile(products) {
+  async function writeProductsFile(products) {
+    if (!_dirHandle || !products) return;
     try {
-      localStorage.setItem(`${PFX}products`, JSON.stringify(products, null, 2));
-    } catch (e) {}
+      const prodsDir = await _dirHandle.getDirectoryHandle('products', { create: true });
+      const fileHandle = await prodsDir.getFileHandle('products.json', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(products, null, 2));
+      await writable.close();
+    } catch (err) {
+      console.warn('[DiskStorage] Products file write error:', err);
+    }
   }
 
-  function writeCustomersFile(customers) {
+  async function writeCustomersFile(customers) {
+    if (!_dirHandle || !customers) return;
     try {
-      localStorage.setItem(`${PFX}customers`, JSON.stringify(customers, null, 2));
-    } catch (e) {}
+      const custDir = await _dirHandle.getDirectoryHandle('customers', { create: true });
+      const fileHandle = await custDir.getFileHandle('customers.json', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(customers, null, 2));
+      await writable.close();
+    } catch (err) {
+      console.warn('[DiskStorage] Customers file write error:', err);
+    }
   }
 
-  function writeSettingsFile(settings) {
+  async function writeSettingsFile(settings) {
+    if (!_dirHandle || !settings) return;
     try {
-      localStorage.setItem(`${PFX}settings`, JSON.stringify(settings, null, 2));
-    } catch (e) {}
+      const setDir = await _dirHandle.getDirectoryHandle('settings', { create: true });
+      const fileHandle = await setDir.getFileHandle('settings.json', { create: true });
+      const writable = await fileHandle.createWritable();
+      await writable.write(JSON.stringify(settings, null, 2));
+      await writable.close();
+    } catch (err) {
+      console.warn('[DiskStorage] Settings file write error:', err);
+    }
   }
 
   /* ── Sync All Data Files ─────────────────────────────────────── */
-  function syncAllFiles(data) {
-    if (!data) return;
+  async function syncAllFiles(data) {
+    if (!data || !_dirHandle) return;
     if (data.bills) {
-      data.bills.forEach(b => writeBillFile(b, (data.billItems || []).filter(i => i.billId === b.id)));
+      for (const b of data.bills) {
+        await writeBillFile(b, (data.billItems || []).filter(i => i.billId === b.id));
+      }
     }
-    if (data.products)  writeProductsFile(data.products);
-    if (data.customers) writeCustomersFile(data.customers);
-    if (data.settings)  writeSettingsFile(data.settings);
+    if (data.products)  await writeProductsFile(data.products);
+    if (data.customers) await writeCustomersFile(data.customers);
+    if (data.settings)  await writeSettingsFile(data.settings);
   }
 
   /* ── Storage Capacity & Metrics ──────────────────────────────── */

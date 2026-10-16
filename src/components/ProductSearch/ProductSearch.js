@@ -166,11 +166,14 @@ const ProductSearch = (() => {
       });
 
       // Mouse click and selection handler
+      let _selected = false;
       const selectCurrent = (e) => {
         if (e) {
           e.preventDefault();
           e.stopPropagation();
         }
+        if (_selected) return;
+        _selected = true;
         selectedIndex = index;
         const selectedProduct = _matchedItems[selectedIndex];
         console.log(selectedIndex);
@@ -179,7 +182,6 @@ const ProductSearch = (() => {
       };
 
       li.addEventListener('mousedown', selectCurrent);
-      li.addEventListener('click', selectCurrent);
 
       ul.appendChild(li);
     });

@@ -39,8 +39,9 @@ const DB = (() => {
       return _cache[name];
     },
     set: (name, data) => {
+      const serialized = JSON.stringify(data);
+      localStorage.setItem(PFX + name, serialized);
       _cache[name] = data;
-      localStorage.setItem(PFX + name, JSON.stringify(data));
     },
     clear: (name) => {
       delete _cache[name];
@@ -79,12 +80,180 @@ const DB = (() => {
   }
 
   /* ══════════════════════════════════════════════════════════════
+     TRANSACTION SNAPSHOT & ROLLBACK HELPERS
+     ══════════════════════════════════════════════════════════════ */
+  function _createSnapshot() {
+    return {
+      bills: JSON.parse(JSON.stringify(T.get('bills'))),
+      bill_items: JSON.parse(JSON.stringify(T.get('bill_items'))),
+      products: JSON.parse(JSON.stringify(T.get('products'))),
+      customers: JSON.parse(JSON.stringify(T.get('customers'))),
+      product_history: JSON.parse(JSON.stringify(T.get('product_history'))),
+      meta: Meta.get(),
+    };
+  }
+
+  function _rollback(snapshot) {
+    if (!snapshot) return;
+    try {
+      if (snapshot.bills) {
+        _cache['bills'] = snapshot.bills;
+        try { localStorage.setItem(PFX + 'bills', JSON.stringify(snapshot.bills)); } catch (e) {}
+      }
+      if (snapshot.bill_items) {
+        _cache['bill_items'] = snapshot.bill_items;
+        try { localStorage.setItem(PFX + 'bill_items', JSON.stringify(snapshot.bill_items)); } catch (e) {}
+      }
+      if (snapshot.products) {
+        _cache['products'] = snapshot.products;
+        try { localStorage.setItem(PFX + 'products', JSON.stringify(snapshot.products)); } catch (e) {}
+      }
+      if (snapshot.customers) {
+        _cache['customers'] = snapshot.customers;
+        try { localStorage.setItem(PFX + 'customers', JSON.stringify(snapshot.customers)); } catch (e) {}
+      }
+      if (snapshot.product_history) {
+        _cache['product_history'] = snapshot.product_history;
+        try { localStorage.setItem(PFX + 'product_history', JSON.stringify(snapshot.product_history)); } catch (e) {}
+      }
+      if (snapshot.meta) {
+        try { Meta.set(snapshot.meta); } catch (e) {}
+      }
+    } catch (e) {
+      console.error('[DB] Critical: Rollback error:', e);
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
+     PRODUCT HISTORY
+     ══════════════════════════════════════════════════════════════ */
+  const ProductHistory = {
+    all: () => T.get('product_history'),
+    forProduct: (productId) => T.get('product_history').filter(h => h.productId === productId),
+    add(productId, type, description) {
+      try {
+        const all = T.get('product_history');
+        const entry = _stamp({
+          id: _id('PH'),
+          productId,
+          type,
+          description,
+        });
+        all.push(entry);
+        if (all.length > 500) {
+          all.splice(0, all.length - 500); // Prevent unbounded storage growth
+        }
+        T.set('product_history', all);
+        return entry;
+      } catch (err) {
+        console.warn('[DB] ProductHistory.add skipped or failed:', err);
+        return null;
+      }
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════
+     INDEXEDDB PERSISTENCE LAYER (Background Durable Storage)
+     ══════════════════════════════════════════════════════════════ */
+  const IDB_NAME = 'SVMH_Billing_DurableStore';
+  const IDB_VER  = 1;
+  let _idb = null;
+
+  function _openIDB() {
+    return new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') return resolve(null);
+      if (_idb) return resolve(_idb);
+      try {
+        const req = indexedDB.open(IDB_NAME, IDB_VER);
+        req.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          ['bills', 'bill_items', 'products', 'customers', 'settings', 'meta', 'product_history'].forEach(table => {
+            if (!db.objectStoreNames.contains(table)) {
+              db.createObjectStore(table, { keyPath: 'id', autoIncrement: false });
+            }
+          });
+        };
+        req.onsuccess = (e) => {
+          _idb = e.target.result;
+          resolve(_idb);
+        };
+        req.onerror = () => resolve(null);
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
+  async function _syncToIndexedDB() {
+    try {
+      const db = await _openIDB();
+      if (!db) return;
+      const tables = ['bills', 'bill_items', 'products', 'customers', 'product_history'];
+      const tx = db.transaction(tables, 'readwrite');
+      tables.forEach(tableName => {
+        const store = tx.objectStore(tableName);
+        store.clear();
+        const records = T.get(tableName) || [];
+        records.forEach(r => {
+          if (r && r.id) store.put(r);
+        });
+      });
+    } catch (e) {
+      // Background persistence sync
+    }
+  }
+
+  async function _checkAndRecoverFromIndexedDB() {
+    try {
+      const bills = T.get('bills');
+      const products = T.get('products');
+      if (bills.length > 0 || products.length > 0) return false;
+
+      const db = await _openIDB();
+      if (!db) return false;
+
+      return new Promise((resolve) => {
+        const tx = db.transaction(['bills', 'bill_items', 'products', 'customers', 'product_history'], 'readonly');
+        let recoveredBills = [];
+        let recoveredProducts = [];
+        let recoveredItems = [];
+        let recoveredCustomers = [];
+        let recoveredHistory = [];
+
+        tx.objectStore('bills').getAll().onsuccess = (e) => { recoveredBills = e.target.result || []; };
+        tx.objectStore('products').getAll().onsuccess = (e) => { recoveredProducts = e.target.result || []; };
+        tx.objectStore('bill_items').getAll().onsuccess = (e) => { recoveredItems = e.target.result || []; };
+        tx.objectStore('customers').getAll().onsuccess = (e) => { recoveredCustomers = e.target.result || []; };
+        tx.objectStore('product_history').getAll().onsuccess = (e) => { recoveredHistory = e.target.result || []; };
+
+        tx.oncomplete = () => {
+          if (recoveredBills.length > 0 || recoveredProducts.length > 0) {
+            console.warn(`[DB] Auto-recovered ${recoveredBills.length} bills and ${recoveredProducts.length} products from IndexedDB!`);
+            if (recoveredBills.length > 0) T.set('bills', recoveredBills);
+            if (recoveredProducts.length > 0) T.set('products', recoveredProducts);
+            if (recoveredItems.length > 0) T.set('bill_items', recoveredItems);
+            if (recoveredCustomers.length > 0) T.set('customers', recoveredCustomers);
+            if (recoveredHistory.length > 0) T.set('product_history', recoveredHistory);
+            resolve(true);
+          } else {
+            resolve(false);
+          }
+        };
+        tx.onerror = () => resolve(false);
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /* ══════════════════════════════════════════════════════════════
      PRODUCTS
      ══════════════════════════════════════════════════════════════ */
   const Products = {
 
     all: ()         => T.get('products'),
-    find: (id)      => T.get('products').find(p => p.id === id) || null,
+    find: (id)      => T.get('products').find(p => p.id === id || String(p.id) === String(id)) || null,
+    get: (id)       => T.get('products').find(p => p.id === id || String(p.id) === String(id)) || null,
     findByName: (n) => T.get('products').find(p => p.name.toLowerCase() === n.toLowerCase()) || null,
 
     /** Full-text search across name, model, brand, product code (id), HSN, unit. */
@@ -103,19 +272,26 @@ const DB = (() => {
         .slice(0, max);
     },
 
-    /** Reduce stock when a bill is saved. Never goes below zero. Tracks history. */
+    /** Reduce or restore stock. Never goes below zero. Tracks history. */
     adjustStock(id, qty, billNo = '') {
+      if (!id || qty === undefined || qty === null) return;
+      const numericQty = parseFloat(qty);
+      if (isNaN(numericQty) || numericQty === 0) return;
+
       const rows = T.get('products');
       const i    = rows.findIndex(p => p.id === id);
       if (i === -1) return;
-      const oldStock = rows[i].stock || 0;
-      const newStock = Math.max(0, oldStock - qty);
-      rows[i].stock     = newStock;
+      const oldStock = parseFloat(rows[i].stock) || 0;
+      const newStock = Math.max(0, oldStock - numericQty);
+      rows[i].stock     = Math.round(newStock * 100) / 100;
       rows[i].updatedAt = _now();
       T.set('products', rows);
 
       const billInfo = billNo ? ` (Bill: ${billNo})` : '';
-      ProductHistory.add(id, 'stock_update', `Stock reduced: ${oldStock} → ${newStock}${billInfo}`);
+      const actionDesc = numericQty > 0
+        ? `Stock reduced: ${oldStock} → ${rows[i].stock}${billInfo}`
+        : `Stock restored: ${oldStock} → ${rows[i].stock}${billInfo}`;
+      ProductHistory.add(id, 'stock_update', actionDesc);
     },
 
     /** Update rate (future: product management page). */
@@ -224,7 +400,7 @@ const DB = (() => {
   const Customers = {
 
     all:  ()   => T.get('customers'),
-    find: (id) => T.get('customers').find(c => c.id === id) || null,
+    find: (id) => T.get('customers').find(c => c.id === id || String(c.id) === String(id)) || null,
 
     findByPhone: (phone) =>
       T.get('customers').find(c => c.phone && c.phone === (phone || '').trim()) || null,
@@ -351,7 +527,7 @@ const DB = (() => {
 
     all:       ()     => T.get('bills').filter(b => !b.isDeleted),
     deleted:   ()     => T.get('bills').filter(b => b.isDeleted === true),
-    find:      (id)   => T.get('bills').find(b => b.id === id) || null,
+    find:      (id)   => T.get('bills').find(b => b.id === id || String(b.id) === String(id)) || null,
     findByNo:  (no)   => T.get('bills').find(b => b.billNo === no) || null,
 
     forCustomer: (customerId) =>
@@ -469,10 +645,6 @@ const DB = (() => {
 
     if (modified) {
       T.set('bills', bills);
-      try {
-        localStorage.setItem('bills', JSON.stringify(bills));
-        localStorage.setItem('svmh_bills', JSON.stringify(bills));
-      } catch (e) {}
     }
   }
 
@@ -482,7 +654,6 @@ const DB = (() => {
    * Checks ALL active and deleted/trash bills to guarantee no duplication.
    */
   function nextBillNo() {
-    _repairHistoricalDuplicateInvoiceNumbers();
     const bills = T.get('bills') || [];
     const d     = new Date();
     const ym    = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -519,7 +690,7 @@ const DB = (() => {
      ══════════════════════════════════════════════════════════════ */
 
   /**
-   * Validate, persist a complete bill, reduce product stock.
+   * Validate, persist a complete bill, reduce product stock atomically with rollback.
    */
   function saveBill({ customerName, customerPhone, customerAddress, billType, paymentMode, billNo, items, totals }) {
 
@@ -536,187 +707,248 @@ const DB = (() => {
       errors.push('Add at least one product to the bill.');
     } else {
       items.forEach((item, i) => {
-        if (!item.qty || item.qty <= 0)
+        const q = parseFloat(item.qty);
+        if (isNaN(q) || q <= 0)
           errors.push(`Row ${i + 1}: Quantity must be greater than zero.`);
         if (!item.productName || !item.productName.trim())
           errors.push(`Row ${i + 1}: Product name is missing.`);
-        if (!item.rate || item.rate <= 0)
-          errors.push(`Row ${i + 1}: Product price must be greater than zero.`);
+        const r = parseFloat(item.rate);
+        if (isNaN(r) || r < 0)
+          errors.push(`Row ${i + 1}: Product price must be zero or greater.`);
       });
     }
 
     if (errors.length > 0) return { success: false, errors, fieldErrors };
 
-    /* ── 2. Ensure Bill Number is non-empty and unique ── */
-    _repairHistoricalDuplicateInvoiceNumbers();
-    const allBills = T.get('bills') || [];
-    let finalBillNo = billNo ? billNo.trim() : '';
+    const snapshot = _createSnapshot();
 
-    if (!finalBillNo || allBills.some(b => b.billNo === finalBillNo || b.invoiceNo === finalBillNo)) {
-      finalBillNo = nextBillNo();
+    try {
+      /* ── 2. Ensure Bill Number is non-empty and unique ── */
+      const allBills = T.get('bills') || [];
+      let finalBillNo = billNo ? billNo.trim() : '';
+
+      if (!finalBillNo || allBills.some(b => b.billNo === finalBillNo || b.invoiceNo === finalBillNo)) {
+        finalBillNo = nextBillNo();
+      }
+
+      /* ── 3. Find or create customer (walk-in when name is blank) ── */
+      const effectiveName = nameTrimmed || 'Walk-in Customer';
+      const customer = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
+
+      /* ── 4. Insert bill ── */
+      const bill = Bills.insert({
+        billNo:          finalBillNo,
+        invoiceNo:       finalBillNo,
+        customerId:      customer.id,
+        customerName:    customer.name,
+        customerPhone:   customer.phone,
+        customerAddress: addressTrimmed,
+        address:         addressTrimmed,
+        billType:        billType || 'normal',
+        paymentMode:     paymentMode || 'Cash',
+        paymentMethod:   paymentMode || 'Cash',
+        itemCount:       items.length,
+        subtotal:          totals.subtotal          || 0,
+        totalItemDiscount: totals.totalItemDiscount || 0,
+        totalTaxable:      totals.totalTaxable      || 0,
+        totalGst:          totals.totalGst          || 0,
+        billDiscount:      totals.billDiscount      || 0,
+        roundOff:          totals.roundOff          || 0,
+        grandTotal:        totals.grandTotal        || 0,
+      });
+
+      /* ── 5. Insert bill items + reduce stock ── */
+      const savedItems = BillItems.insertMany(bill.id, items.map(item => ({
+        productId:      item.productId   || null,
+        productName:    item.productName || '',
+        hsn:            item.hsn         || '',
+        unit:           item.unit        || '',
+        qty:            parseFloat(item.qty) || 0,
+        rate:           parseFloat(item.rate) || 0,
+        discPct:        parseFloat(item.discPct) || 0,
+        gstPct:         parseFloat(item.gstPct)  || 0,
+        baseAmount:     parseFloat(item.baseAmount)     || 0,
+        discountAmount: parseFloat(item.discountAmount) || 0,
+        taxableAmount:  parseFloat(item.taxableAmount)  || 0,
+        gstAmount:      parseFloat(item.gstAmount)      || 0,
+        rowTotal:       parseFloat(item.rowTotal)       || 0,
+      })));
+
+      items.forEach(item => {
+        if (item.productId) Products.adjustStock(item.productId, item.qty, finalBillNo);
+      });
+
+      /* ── 6. Update customer aggregates ── */
+      Customers.addBillTotals(customer.id, totals.grandTotal || 0, bill.date);
+
+      /* ── 7. Sync to DiskStorage (non-blocking) ── */
+      if (typeof DiskStorage !== 'undefined') {
+        try {
+          DiskStorage.writeBillFile(bill, savedItems);
+          DiskStorage.writeProductsFile(Products.all());
+          DiskStorage.writeCustomersFile(Customers.all());
+        } catch (e) {}
+      }
+
+      /* ── 8. Sync to IndexedDB for true persistent storage ── */
+      _syncToIndexedDB();
+
+      return { success: true, bill, items: savedItems, customer };
+    } catch (err) {
+      console.error('[DB] Transaction error in saveBill, rolling back:', err);
+      _rollback(snapshot);
+      return { success: false, error: err.message || 'Database write failure during bill save.' };
     }
-
-    /* ── 3. Find or create customer (walk-in when name is blank) ── */
-    const effectiveName = nameTrimmed || 'Walk-in Customer';
-    const customer = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
-
-    /* ── 4. Insert bill ── */
-    const bill = Bills.insert({
-      billNo:          finalBillNo,
-      invoiceNo:       finalBillNo,
-      customerId:      customer.id,
-      customerName:    customer.name,
-      customerPhone:   customer.phone,
-      customerAddress: addressTrimmed,
-      address:         addressTrimmed,
-      billType,
-      paymentMode:     paymentMode || 'Cash',
-      paymentMethod:   paymentMode || 'Cash',
-      itemCount:       items.length,
-      subtotal:          totals.subtotal          || 0,
-      totalItemDiscount: totals.totalItemDiscount || 0,
-      totalTaxable:      totals.totalTaxable      || 0,
-      totalGst:          totals.totalGst          || 0,
-      billDiscount:      totals.billDiscount      || 0,
-      roundOff:          totals.roundOff          || 0,
-      grandTotal:        totals.grandTotal        || 0,
-    });
-
-    /* ── 5. Insert bill items + reduce stock ── */
-    const savedItems = BillItems.insertMany(bill.id, items.map(item => ({
-      productId:      item.productId   || null,
-      productName:    item.productName || '',
-      hsn:            item.hsn         || '',
-      unit:           item.unit        || '',
-      qty:            item.qty,
-      rate:           item.rate,
-      discPct:        item.discPct     || 0,
-      gstPct:         item.gstPct      || 0,
-      baseAmount:     item.baseAmount      || 0,
-      discountAmount: item.discountAmount  || 0,
-      taxableAmount:  item.taxableAmount   || 0,
-      gstAmount:      item.gstAmount       || 0,
-      rowTotal:       item.rowTotal        || 0,
-    })));
-
-    items.forEach(item => {
-      if (item.productId) Products.adjustStock(item.productId, item.qty, finalBillNo);
-    });
-
-    /* ── 6. Update customer aggregates ── */
-    Customers.addBillTotals(customer.id, totals.grandTotal || 0);
-
-    /* ── 7. Sync to DiskStorage ── */
-    if (typeof DiskStorage !== 'undefined') {
-      DiskStorage.writeBillFile(bill, savedItems);
-      DiskStorage.writeProductsFile(Products.all());
-      DiskStorage.writeCustomersFile(Customers.all());
-    }
-
-    return { success: true, bill, items: savedItems, customer };
   }
 
   /* ══════════════════════════════════════════════════════════════
      UPDATE EXISTING BILL
      ══════════════════════════════════════════════════════════════ */
   function updateBill({ billId, customerName, customerPhone, customerAddress, billType, paymentMode, billNo, items, totals }) {
-    let bills = T.get('bills');
-    if (!bills || bills.length === 0) {
-      try {
-        bills = JSON.parse(localStorage.getItem('svmh_bills') || localStorage.getItem('bills') || '[]');
-      } catch { bills = []; }
+    /* Validation */
+    if (!items || items.length === 0) {
+      return { success: false, error: 'Cannot update bill with zero items.' };
+    }
+    for (let i = 0; i < items.length; i++) {
+      const q = parseFloat(items[i].qty);
+      if (isNaN(q) || q <= 0) {
+        return { success: false, error: `Row ${i + 1}: Quantity must be greater than zero.` };
+      }
     }
 
+    const bills = T.get('bills') || [];
     const index = bills.findIndex(b => b.id === billId || b.billNo === billNo || b.invoiceNo === billNo || b.invoiceNo === billId || b.id === billNo || b.billNo === billId);
     if (index === -1) return { success: false, error: 'Bill not found' };
 
-    const targetBill = bills[index];
-    const targetInvoiceNo = targetBill.invoiceNo || targetBill.billNo || billNo || billId;
+    const snapshot = _createSnapshot();
 
-    const nameTrimmed    = (customerName  || '').trim();
-    const addressTrimmed = (customerAddress || '').trim();
-    const effectiveName  = nameTrimmed || 'Walk-in Customer';
-    const customer       = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
+    try {
+      const targetBill = bills[index];
+      const targetInvoiceNo = targetBill.invoiceNo || targetBill.billNo || billNo || billId;
+      const oldGrandTotal = parseFloat(targetBill.grandTotal) || 0;
+      const oldCustomerId = targetBill.customerId;
 
-    // Restore old stock for previous items of this bill before applying new items
-    const oldItems = BillItems.forBill(targetBill.id);
-    oldItems.forEach(oldIt => {
-      if (oldIt.productId) {
-        Products.adjustStock(oldIt.productId, -oldIt.qty, targetInvoiceNo);
+      const nameTrimmed    = (customerName  || '').trim();
+      const addressTrimmed = (customerAddress || '').trim();
+      const effectiveName  = nameTrimmed || 'Walk-in Customer';
+      const customer       = Customers.upsert(effectiveName, (customerPhone || '').trim(), addressTrimmed);
+
+      // Restore old stock for previous items of this bill before applying new items
+      const oldItems = BillItems.forBill(targetBill.id);
+      oldItems.forEach(oldIt => {
+        if (oldIt.productId) {
+          Products.adjustStock(oldIt.productId, -oldIt.qty, targetInvoiceNo);
+        }
+      });
+
+      // Remove old bill_items
+      const allBillItems = T.get('bill_items').filter(it => it.billId !== targetBill.id);
+
+      // Insert new bill_items
+      const newItems = items.map(item => _stamp({
+        id: _id('BI'),
+        billId: targetBill.id,
+        productId:      item.productId   || null,
+        productName:    item.productName || '',
+        hsn:            item.hsn         || '',
+        unit:           item.unit        || '',
+        qty:            parseFloat(item.qty) || 0,
+        rate:           parseFloat(item.rate) || 0,
+        discPct:        parseFloat(item.discPct) || 0,
+        gstPct:         parseFloat(item.gstPct)  || 0,
+        baseAmount:     parseFloat(item.baseAmount)     || 0,
+        discountAmount: parseFloat(item.discountAmount) || 0,
+        taxableAmount:  parseFloat(item.taxableAmount)  || 0,
+        gstAmount:      parseFloat(item.gstAmount)      || 0,
+        rowTotal:       parseFloat(item.rowTotal)       || 0,
+      }));
+
+      T.set('bill_items', [...allBillItems, ...newItems]);
+
+      // Reduce stock for new items
+      items.forEach(item => {
+        if (item.productId) {
+          Products.adjustStock(item.productId, item.qty, targetInvoiceNo);
+        }
+      });
+
+      // Reconcile customer totals accurately
+      const newGrandTotal = parseFloat(totals.grandTotal) || 0;
+      const allCustomers = T.get('customers');
+
+      if (oldCustomerId && oldCustomerId !== customer.id) {
+        // Customer was changed: adjust old customer totals
+        const oldCustIdx = allCustomers.findIndex(c => c.id === oldCustomerId);
+        if (oldCustIdx !== -1) {
+          allCustomers[oldCustIdx].totalBills = Math.max(0, (allCustomers[oldCustIdx].totalBills || 1) - 1);
+          allCustomers[oldCustIdx].totalAmount = Math.max(0, (allCustomers[oldCustIdx].totalAmount || 0) - oldGrandTotal);
+          allCustomers[oldCustIdx].updatedAt = _now();
+        }
+        // Add new customer totals
+        const newCustIdx = allCustomers.findIndex(c => c.id === customer.id);
+        if (newCustIdx !== -1) {
+          allCustomers[newCustIdx].totalBills = (allCustomers[newCustIdx].totalBills || 0) + 1;
+          allCustomers[newCustIdx].totalAmount = (allCustomers[newCustIdx].totalAmount || 0) + newGrandTotal;
+          allCustomers[newCustIdx].lastPurchaseDate = targetBill.date || _today();
+          allCustomers[newCustIdx].updatedAt = _now();
+        }
+      } else {
+        // Same customer: adjust amount difference
+        const custIdx = allCustomers.findIndex(c => c.id === customer.id);
+        if (custIdx !== -1) {
+          const diff = newGrandTotal - oldGrandTotal;
+          allCustomers[custIdx].totalAmount = Math.max(0, (allCustomers[custIdx].totalAmount || 0) + diff);
+          allCustomers[custIdx].updatedAt = _now();
+        }
       }
-    });
+      T.set('customers', allCustomers);
 
-    // Remove old bill_items
-    const allBillItems = T.get('bill_items').filter(it => it.billId !== targetBill.id);
+      // Update bill record keeping the same invoiceNo & billNo & ID
+      const updatedBill = {
+        ...targetBill,
+        invoiceNo:         targetInvoiceNo,
+        billNo:            targetInvoiceNo,
+        customerId:        customer.id,
+        customerName:      customer.name,
+        customerPhone:     customer.phone,
+        customerAddress:   addressTrimmed,
+        address:           addressTrimmed,
+        billType:          billType || targetBill.billType || 'normal',
+        paymentMode:       paymentMode || targetBill.paymentMode || 'Cash',
+        paymentMethod:     paymentMode || targetBill.paymentMethod || 'Cash',
+        items:             newItems,
+        itemCount:         items.length,
+        subtotal:          totals.subtotal          || 0,
+        totalItemDiscount: totals.totalItemDiscount || 0,
+        totalTaxable:      totals.totalTaxable      || 0,
+        totalGst:          totals.totalGst          || 0,
+        billDiscount:      totals.billDiscount      || 0,
+        roundOff:          totals.roundOff          || 0,
+        grandTotal:        newGrandTotal,
+        updatedAt:         _now(),
+      };
 
-    // Insert new bill_items
-    const newItems = items.map(item => _stamp({
-      id: _id('BI'),
-      billId: targetBill.id,
-      productId:      item.productId   || null,
-      productName:    item.productName || '',
-      hsn:            item.hsn         || '',
-      unit:           item.unit        || '',
-      qty:            item.qty,
-      rate:           item.rate,
-      discPct:        item.discPct     || 0,
-      gstPct:         item.gstPct      || 0,
-      baseAmount:     item.baseAmount      || 0,
-      discountAmount: item.discountAmount  || 0,
-      taxableAmount:  item.taxableAmount   || 0,
-      gstAmount:      item.gstAmount       || 0,
-      rowTotal:       item.rowTotal        || 0,
-    }));
+      bills[index] = updatedBill;
+      T.set('bills', bills);
 
-    T.set('bill_items', [...allBillItems, ...newItems]);
-
-    // Reduce stock for new items
-    items.forEach(item => {
-      if (item.productId) {
-        Products.adjustStock(item.productId, item.qty, targetInvoiceNo);
+      // Sync to DiskStorage (non-blocking)
+      if (typeof DiskStorage !== 'undefined') {
+        try {
+          DiskStorage.writeBillFile(updatedBill, newItems);
+          DiskStorage.writeProductsFile(Products.all());
+          DiskStorage.writeCustomersFile(Customers.all());
+        } catch (e) {}
       }
-    });
 
-    // Update bill record keeping the same invoiceNo & billNo & ID
-    const updatedBill = {
-      ...targetBill,
-      invoiceNo:         targetInvoiceNo,
-      billNo:            targetInvoiceNo,
-      customerId:        customer.id,
-      customerName:      customer.name,
-      customerPhone:     customer.phone,
-      customerAddress:   addressTrimmed,
-      address:           addressTrimmed,
-      billType,
-      paymentMode:       paymentMode || 'Cash',
-      paymentMethod:     paymentMode || 'Cash',
-      items:             newItems,
-      itemCount:         items.length,
-      subtotal:          totals.subtotal          || 0,
-      totalItemDiscount: totals.totalItemDiscount || 0,
-      totalTaxable:      totals.totalTaxable      || 0,
-      totalGst:          totals.totalGst          || 0,
-      billDiscount:      totals.billDiscount      || 0,
-      roundOff:          totals.roundOff          || 0,
-      grandTotal:        totals.grandTotal        || 0,
-      updatedAt:          _now(),
-    };
+      // Sync to IndexedDB
+      _syncToIndexedDB();
 
-    bills[index] = updatedBill;
-    T.set('bills', bills);
-
-    // Write to both localStorage keys
-    localStorage.setItem('bills', JSON.stringify(bills));
-    localStorage.setItem('svmh_bills', JSON.stringify(bills));
-
-    // Sync to DiskStorage
-    if (typeof DiskStorage !== 'undefined') {
-      DiskStorage.writeBillFile(updatedBill, newItems);
-      DiskStorage.writeProductsFile(Products.all());
-      DiskStorage.writeCustomersFile(Customers.all());
+      return { success: true, bill: updatedBill, items: newItems, customer };
+    } catch (err) {
+      console.error('[DB] Transaction error in updateBill, rolling back:', err);
+      _rollback(snapshot);
+      return { success: false, error: err.message || 'Database write failure during bill update.' };
     }
-
-    return { success: true, bill: updatedBill, items: newItems, customer };
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -727,20 +959,18 @@ const DB = (() => {
     const i = bills.findIndex(b => b.id === billIdOrNo || b.billNo === billIdOrNo);
     if (i === -1) return { success: false, error: 'Bill not found' };
 
-    const oldValue = bills[i].paymentMode || bills[i].paymentMethod || 'Cash';
-    console.log("Old payment:", oldValue);
-    console.log("New payment:", newMode);
-
     bills[i].paymentMode   = newMode;
     bills[i].paymentMethod = newMode;
     bills[i].updatedAt     = _now();
     T.set('bills', bills);
-    console.log("Saved");
 
     if (typeof DiskStorage !== 'undefined') {
-      const items = BillItems.forBill(bills[i].id);
-      DiskStorage.writeBillFile(bills[i], items);
+      try {
+        const items = BillItems.forBill(bills[i].id);
+        DiskStorage.writeBillFile(bills[i], items);
+      } catch (e) {}
     }
+    _syncToIndexedDB();
 
     return { success: true, bill: bills[i] };
   }
@@ -750,83 +980,72 @@ const DB = (() => {
      ══════════════════════════════════════════════════════════════ */
 
   function deleteBill(billIdOrNo) {
-    console.time('deleteBill');
     const bills = T.get('bills');
     const i = bills.findIndex(b => b.id === billIdOrNo || b.billNo === billIdOrNo);
-    if (i === -1) {
-      console.timeEnd('deleteBill');
-      return { success: false, error: 'Bill not found' };
-    }
+    if (i === -1) return { success: false, error: 'Bill not found' };
 
     const bill = bills[i];
-    if (bill.isDeleted) {
-      console.timeEnd('deleteBill');
-      return { success: false, error: 'Bill already deleted' };
-    }
+    if (bill.isDeleted) return { success: false, error: 'Bill already deleted' };
 
-    // Step 1: Soft-delete bill in memory & storage (instant)
-    bills[i].isDeleted = true;
-    bills[i].deletedAt = _now();
-    T.set('bills', bills);
+    const snapshot = _createSnapshot();
 
-    // Step 2: Update customer aggregate totals
-    if (bill.customerId) {
-      const custs = T.get('customers');
-      const ci = custs.findIndex(c => c.id === bill.customerId);
-      if (ci !== -1) {
-        custs[ci].totalBills = Math.max(0, (custs[ci].totalBills || 1) - 1);
-        custs[ci].totalAmount = Math.max(0, (custs[ci].totalAmount || 0) - (bill.grandTotal || 0));
-        custs[ci].updatedAt = _now();
-        T.set('customers', custs);
+    try {
+      // Step 1: Soft-delete bill in memory & storage (instant)
+      bills[i].isDeleted = true;
+      bills[i].deletedAt = _now();
+      T.set('bills', bills);
+
+      // Step 2: Update customer aggregate totals
+      if (bill.customerId) {
+        const custs = T.get('customers');
+        const ci = custs.findIndex(c => c.id === bill.customerId);
+        if (ci !== -1) {
+          custs[ci].totalBills = Math.max(0, (custs[ci].totalBills || 1) - 1);
+          custs[ci].totalAmount = Math.max(0, (custs[ci].totalAmount || 0) - (bill.grandTotal || 0));
+          custs[ci].updatedAt = _now();
+          T.set('customers', custs);
+        }
       }
-    }
 
-    // Step 4: Restore product stock quantities in background
-    setTimeout(() => {
+      // Step 3: Restore product stock quantities SYNCHRONOUSLY and ATOMICALLY
       const items = BillItems.forBill(bill.id);
       items.forEach(item => {
         if (item.productId) {
-          const prods = T.get('products');
-          const pi = prods.findIndex(p => p.id === item.productId);
-          if (pi !== -1) {
-            const oldStock = prods[pi].stock;
-            prods[pi].stock = Math.max(0, oldStock + (item.qty || 0));
-            prods[pi].updatedAt = _now();
-            T.set('products', prods);
-
-            ProductHistory.add(
-              item.productId,
-              'stock_update',
-              `Restored ${item.qty} ${item.unit || ''} from deleted bill ${bill.billNo}`
-            );
-          }
+          Products.adjustStock(item.productId, -(item.qty || 0), bill.billNo);
         }
       });
-    }, 0);
 
-    console.timeEnd('deleteBill');
-    return { success: true, bill: bills[i] };
+      _syncToIndexedDB();
+      return { success: true, bill: bills[i] };
+    } catch (err) {
+      console.error('[DB] Error in deleteBill, rolling back:', err);
+      _rollback(snapshot);
+      return { success: false, error: err.message || 'Failed to delete bill' };
+    }
   }
 
   function permanentlyDeleteBill(billIdOrNo) {
-    console.log("Delete clicked");
     const bills = T.get('bills');
     const bill = bills.find(b => b.id === billIdOrNo || b.billNo === billIdOrNo);
     if (!bill) return { success: false, error: 'Bill not found' };
 
-    // Remove bill and bill items permanently
-    const updatedBills = bills.filter(b => b.id !== bill.id);
-    const updatedItems = T.get('bill_items').filter(i => i.billId !== bill.id);
-    T.set('bills', updatedBills);
-    T.set('bill_items', updatedItems);
+    const snapshot = _createSnapshot();
+    try {
+      // Remove bill and bill items permanently
+      const updatedBills = bills.filter(b => b.id !== bill.id);
+      const updatedItems = T.get('bill_items').filter(i => i.billId !== bill.id);
+      T.set('bills', updatedBills);
+      T.set('bill_items', updatedItems);
 
-    console.log("Bill removed");
-    console.log("Database updated");
-
-    if (typeof DiskStorage !== 'undefined') {
-      DiskStorage.removeBillFile(bill.billNo);
+      if (typeof DiskStorage !== 'undefined') {
+        try { DiskStorage.removeBillFile(bill.billNo); } catch (e) {}
+      }
+      _syncToIndexedDB();
+      return { success: true, bill };
+    } catch (err) {
+      _rollback(snapshot);
+      return { success: false, error: err.message };
     }
-    return { success: true, bill };
   }
 
   function restoreBill(billIdOrNo) {
@@ -837,47 +1056,39 @@ const DB = (() => {
     const bill = bills[i];
     if (!bill.isDeleted) return { success: false, error: 'Bill is not deleted' };
 
-    // 1. Fetch items for this bill
-    const items = BillItems.forBill(bill.id);
+    const snapshot = _createSnapshot();
+    try {
+      // 1. Fetch items and re-deduct product stock
+      const items = BillItems.forBill(bill.id);
+      items.forEach(item => {
+        if (item.productId) {
+          Products.adjustStock(item.productId, item.qty || 0, bill.billNo);
+        }
+      });
 
-    // 2. Re-deduct product stock
-    items.forEach(item => {
-      if (item.productId) {
-        const prods = T.get('products');
-        const pi = prods.findIndex(p => p.id === item.productId);
-        if (pi !== -1) {
-          const oldStock = prods[pi].stock;
-          prods[pi].stock = Math.max(0, oldStock - (item.qty || 0));
-          prods[pi].updatedAt = _now();
-          T.set('products', prods);
+      // 2. Clear soft-delete flag
+      bills[i].isDeleted = false;
+      delete bills[i].deletedAt;
+      T.set('bills', bills);
 
-          ProductHistory.add(
-            item.productId,
-            'stock_update',
-            `Deducted ${item.qty} ${item.unit || ''} from restored bill ${bill.billNo}`
-          );
+      // 3. Re-add customer aggregate totals
+      if (bill.customerId) {
+        const custs = T.get('customers');
+        const ci = custs.findIndex(c => c.id === bill.customerId);
+        if (ci !== -1) {
+          custs[ci].totalBills = (custs[ci].totalBills || 0) + 1;
+          custs[ci].totalAmount = (custs[ci].totalAmount || 0) + (bill.grandTotal || 0);
+          custs[ci].updatedAt = _now();
+          T.set('customers', custs);
         }
       }
-    });
 
-    // 3. Clear soft-delete flag
-    bills[i].isDeleted = false;
-    delete bills[i].deletedAt;
-    T.set('bills', bills);
-
-    // 4. Re-add customer aggregate totals
-    if (bill.customerId) {
-      const custs = T.get('customers');
-      const ci = custs.findIndex(c => c.id === bill.customerId);
-      if (ci !== -1) {
-        custs[ci].totalBills = (custs[ci].totalBills || 0) + 1;
-        custs[ci].totalAmount = (custs[ci].totalAmount || 0) + (bill.grandTotal || 0);
-        custs[ci].updatedAt = _now();
-        T.set('customers', custs);
-      }
+      _syncToIndexedDB();
+      return { success: true, bill: bills[i] };
+    } catch (err) {
+      _rollback(snapshot);
+      return { success: false, error: err.message };
     }
-
-    return { success: true, bill: bills[i] };
   }
 
   /* ══════════════════════════════════════════════════════════════
@@ -900,35 +1111,93 @@ const DB = (() => {
      ══════════════════════════════════════════════════════════════ */
 
   function init() {
+    // 0. Clear in-memory cache to ensure fresh read from persistent storage
+    for (const k of Object.keys(_cache)) {
+      delete _cache[k];
+    }
+
+    // 1. One-time cleanup of legacy duplicate mirror keys in localStorage to prevent QuotaExceededError
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const legacyBills = localStorage.getItem('bills');
+        const canonBills = localStorage.getItem(PFX + 'bills');
+        if (legacyBills && (!canonBills || canonBills === '[]')) {
+          localStorage.setItem(PFX + 'bills', legacyBills);
+        }
+        localStorage.removeItem('bills'); // Remove redundant mirror copy
+
+        // Remove legacy fake disk files that clogged localStorage
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('svmh_disk_bill_')) {
+            localStorage.removeItem(k);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Perform one-time historical duplicate repair if needed
     _repairHistoricalDuplicateInvoiceNumbers();
-    const m = Meta.get();
-    if (m.initialized) {
-      console.log(`[DB] Ready — ${Products.count()} products, ${Bills.count()} bills`);
+
+    // 3. Check existing data: NEVER overwrite if data already exists
+    const existingProducts = T.get('products');
+    const existingBills = T.get('bills');
+
+    if (existingProducts.length > 0) {
+      const currentMeta = Meta.get();
+      let maxSeq = 0;
+      existingBills.forEach(b => {
+        const no = String(b.billNo || b.invoiceNo || '');
+        const match = no.match(/-(\d+)$/);
+        if (match) {
+          const s = parseInt(match[1], 10);
+          if (!isNaN(s) && s > maxSeq) maxSeq = s;
+        }
+      });
+
+      Meta.patch({
+        initialized: true,
+        billCounter: Math.max(currentMeta.billCounter || 0, maxSeq),
+      });
+
+      console.log(`[DB] Ready — ${existingProducts.length} products, ${existingBills.length} bills preserved`);
+      _syncToIndexedDB();
       return;
     }
 
-    /* Seed products from SampleProducts array (defined in products.js) */
+    // 4. Seed products synchronously on first run if products table is empty
     if (typeof SampleProducts !== 'undefined' && SampleProducts.length > 0) {
       const seeded = SampleProducts.map((p, i) => _stamp({
-        id:    `PRD${String(i + 1).padStart(3, '0')}`,
+        id:    p.id || `PRD${String(i + 1).padStart(3, '0')}`,
         name:  p.name,
-        hsn:   String(p.hsn),
-        unit:  p.unit,
-        rate:  p.rate,
-        gst:   p.gst,
-        stock: 500,   // Default opening stock
+        hsn:   String(p.hsn || ''),
+        unit:  p.unit || 'Nos',
+        rate:  p.rate || 0,
+        gst:   p.gst || 0,
+        stock: p.stock !== undefined ? p.stock : 500, // Default opening stock
       }));
       T.set('products', seeded);
       console.log(`[DB] Seeded ${seeded.length} products`);
     }
 
-    Meta.set({
-      initialized: true,
-      billCounter: 0,
-      version:     '1.0.0',
-      createdAt:   _now(),
+    const currentMeta = Meta.get();
+    let maxSeq = 0;
+    existingBills.forEach(b => {
+      const no = String(b.billNo || b.invoiceNo || '');
+      const match = no.match(/-(\d+)$/);
+      if (match) {
+        const s = parseInt(match[1], 10);
+        if (!isNaN(s) && s > maxSeq) maxSeq = s;
+      }
     });
 
+    Meta.set({
+      initialized: true,
+      billCounter: Math.max(currentMeta.billCounter || 0, maxSeq),
+      version:     '1.0.0',
+      createdAt:   currentMeta.createdAt || _now(),
+    });
+    _syncToIndexedDB();
     console.log('[DB] Initialized successfully');
   }
 
@@ -938,7 +1207,7 @@ const DB = (() => {
 
   /** Clear all data and re-initialize (dev use only). */
   function _hardReset() {
-    ['products', 'customers', 'bills', 'bill_items'].forEach(T.clear);
+    ['products', 'customers', 'bills', 'bill_items', 'product_history'].forEach(T.clear);
     T.clear('meta');  // triggers re-seed on next init()
     console.warn('[DB] Hard reset — all data cleared');
     init();
@@ -968,19 +1237,22 @@ const DB = (() => {
   };
 
   function backupData() {
+    const tables = {
+      meta: Meta.get(),
+      settings: Settings.get(),
+      products: Products.all(),
+      customers: Customers.all(),
+      bills: Bills.all(),
+      billItems: T.get('bill_items'),
+      productHistory: T.get('product_history'),
+      deletedBills: Bills.deleted(),
+    };
     const backup = {
       system: 'SVMH_BILLING_SYSTEM',
       version: '1.0.0',
       exportedAt: _now(),
-      data: {
-        meta: Meta.get(),
-        settings: Settings.get(),
-        products: Products.all(),
-        customers: Customers.all(),
-        bills: Bills.all(),
-        billItems: T.get('bill_items'),
-        deletedBills: Bills.deleted(),
-      }
+      ...tables,
+      data: tables
     };
     return JSON.stringify(backup, null, 2);
   }
@@ -997,6 +1269,7 @@ const DB = (() => {
       const customers = payload.customers || data.customers;
       const bills = payload.bills || data.bills;
       const billItems = payload.billItems || data.billItems;
+      const productHistory = payload.productHistory || data.productHistory;
       const settings = payload.settings || data.settings;
       const deletedBills = payload.deletedBills || data.deletedBills;
       const meta = payload.meta || data.meta;
@@ -1016,13 +1289,14 @@ const DB = (() => {
       localStorage.setItem(PFX + 'backup_before_restore', safetySnapshot);
 
       // 2. Perform safe restoration of stored tables
-      if (products)     T.set('products', products);
-      if (customers)    T.set('customers', customers);
-      if (bills)        T.set('bills', bills);
-      if (billItems)    T.set('bill_items', billItems);
-      if (settings)     T.set('settings', settings);
-      if (deletedBills) T.set('deleted_bills', deletedBills);
-      if (meta)         T.set('meta', meta);
+      if (products)       T.set('products', products);
+      if (customers)      T.set('customers', customers);
+      if (bills)          T.set('bills', bills);
+      if (billItems)      T.set('bill_items', billItems);
+      if (productHistory) T.set('product_history', productHistory);
+      if (settings)       T.set('settings', settings);
+      if (deletedBills)   T.set('deleted_bills', deletedBills);
+      if (meta)           T.set('meta', meta);
 
       // Re-initialize DB in-memory cache
       init();
@@ -1036,11 +1310,12 @@ const DB = (() => {
         if (snap) {
           const snapObj = JSON.parse(snap);
           const p = snapObj.data || snapObj;
-          if (p.products)  T.set('products', p.products);
-          if (p.customers) T.set('customers', p.customers);
-          if (p.bills)     T.set('bills', p.bills);
-          if (p.billItems) T.set('bill_items', p.billItems);
-          if (p.settings)  T.set('settings', p.settings);
+          if (p.products)       T.set('products', p.products);
+          if (p.customers)      T.set('customers', p.customers);
+          if (p.bills)          T.set('bills', p.bills);
+          if (p.billItems)      T.set('bill_items', p.billItems);
+          if (p.productHistory) T.set('product_history', p.productHistory);
+          if (p.settings)       T.set('settings', p.settings);
           init();
         }
       } catch (rbErr) {
@@ -1056,6 +1331,7 @@ const DB = (() => {
     Customers,
     Bills,
     BillItems,
+    ProductHistory,
     Settings,
     nextBillNo,
     saveBill,
